@@ -1,3 +1,7 @@
+/**
+ * Adding dark theme option
+ */
+
 //
 //  BraintreePlugin.m
 //
@@ -21,12 +25,29 @@
 
 @property (nonatomic, strong) BTAPIClient *braintreeClient;
 @property NSString* token;
+@property BOOL darkTheme;
 
 @end
 
 @implementation AppDelegate(BraintreePlugin)
 
+- (BOOL)application:(UIApplication *)application
+            openURL:(NSURL *)url
+            options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options {
+    NSString *bundle_id = [NSBundle mainBundle].bundleIdentifier;
+    bundle_id = [bundle_id stringByAppendingString:@"braintree.payments"];
 
+    if ([url.scheme localizedCaseInsensitiveCompare:bundle_id] == NSOrderedSame) {
+        return [BTAppSwitch handleOpenURL:url options:options];
+    }
+
+    // all plugins will get the notification, and their handlers will be called
+    [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:CDVPluginHandleOpenURLNotification object:url]];
+
+    return NO;
+}
+
+// iOS 8
 - (BOOL)application:(UIApplication *)application
             openURL:(NSURL *)url
   sourceApplication:(NSString *)sourceApplication
@@ -60,7 +81,7 @@ NSString *countryCode;
 - (void)initialize:(CDVInvokedUrlCommand *)command {
 
     // Ensure we have the correct number of arguments.
-    if ([command.arguments count] != 1) {
+    if ([command.arguments count] < 1) {
         CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"A token is required."];
         [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
         return;
@@ -75,6 +96,7 @@ NSString *countryCode;
         return;
     }
 
+    self.darkTheme = [[command argumentAtIndex:1 withDefault:@(NO)] boolValue];
     self.braintreeClient = [[BTAPIClient alloc] initWithAuthorization:self.token];
 
     if (!self.braintreeClient) {
@@ -107,18 +129,18 @@ NSString *countryCode;
         return;
     }
 
-	if ((PKPaymentAuthorizationViewController.canMakePayments) && ([PKPaymentAuthorizationViewController canMakePaymentsUsingNetworks:@[PKPaymentNetworkVisa, PKPaymentNetworkMasterCard, PKPaymentNetworkAmex, PKPaymentNetworkDiscover]])) {
-		applePayMerchantID = [command.arguments objectAtIndex:0];
-		currencyCode = [command.arguments objectAtIndex:1];
-		countryCode = [command.arguments objectAtIndex:2];
+    if ((PKPaymentAuthorizationViewController.canMakePayments) && ([PKPaymentAuthorizationViewController canMakePaymentsUsingNetworks:@[PKPaymentNetworkVisa, PKPaymentNetworkMasterCard, PKPaymentNetworkAmex, PKPaymentNetworkDiscover]])) {
+        applePayMerchantID = [command.arguments objectAtIndex:0];
+        currencyCode = [command.arguments objectAtIndex:1];
+        countryCode = [command.arguments objectAtIndex:2];
 
-		applePayInited = YES;
+        applePayInited = YES;
 
-	    CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-	    [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
+        CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
+        [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
     } else {
-	    CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"ApplePay cannot be used."];
-	    [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
+        CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"ApplePay cannot be used."];
+        [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
     }
 }
 
@@ -155,7 +177,6 @@ NSString *countryCode;
     // Save off the Cordova callback ID so it can be used in the completion handlers.
     dropInUIcallbackId = command.callbackId;
 
-    /* Drop-IN 5.0 */
     BTDropInRequest *paymentRequest = [[BTDropInRequest alloc] init];
     paymentRequest.amount = amount;
     paymentRequest.applePayDisabled = !applePayInited;
@@ -220,6 +241,12 @@ NSString *countryCode;
             }
         }
     }];
+
+    if (self.darkTheme) {
+        [BTUIKAppearance darkTheme];
+    } else {
+        [BTUIKAppearance lightTheme];
+    }
 
     [self.viewController presentViewController:dropIn animated:YES completion:nil];
 }
@@ -404,4 +431,3 @@ NSString *countryCode;
 }
 
 @end
-

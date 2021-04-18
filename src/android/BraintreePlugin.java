@@ -1,3 +1,7 @@
+/**
+ * Fixing context confusion issue
+ */
+
 package net.justincredible;
 
 import android.util.Log;
@@ -43,6 +47,7 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
 
     private DropInRequest dropInRequest = null;
     private CallbackContext _callbackContext = null;
+    private CallbackContext _resultContext = null;
     private BraintreeFragment braintreeFragment = null;
     private String temporaryToken = null;
 
@@ -54,7 +59,7 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
             return false;
         }
 
-        Log.w(TAG, "execute ==> " + action + " === " + args);
+        Log.i(TAG, "execute ==> " + action + " === " + args);
 
         _callbackContext = callbackContext;
 
@@ -64,6 +69,7 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
             }
             else if (action.equals("presentDropInPaymentUI")) {
                 this.presentDropInPaymentUI(args);
+                _resultContext = callbackContext;
             }
             else if (action.equals("paypalProcess")) {
                 this.paypalProcess(args);
@@ -87,6 +93,12 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
 
     @Override
     public void onError(Exception error) {
+
+        if (_callbackContext == null) {
+            Log.e(TAG, "onError exiting ==> callbackContext is invalid");
+            return;
+        }
+
         Log.e(TAG, "Caught error from BraintreeSDK: " + error.getMessage());
         _callbackContext.error("BraintreePlugin uncaught exception: " + error.getMessage());
     }
@@ -95,8 +107,13 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
 
     private synchronized void initializeBT(final JSONArray args) throws Exception {
 
+        if (_callbackContext == null) {
+            Log.e(TAG, "initializeBT exiting ==> callbackContext is invalid");
+            return;
+        }
+
         // Ensure we have the correct number of arguments.
-        if (args.length() != 1) {
+        if (args.length() < 1) { // ProFit MOD
             _callbackContext.error("A token is required.");
             return;
         }
@@ -122,14 +139,26 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
         // }
 
         _callbackContext.success();
+        _callbackContext = null;
     }
 
     private synchronized void setupApplePay() throws JSONException {
+
+        if (_callbackContext == null) {
+            Log.e(TAG, "setupApplePay exiting ==> callbackContext is invalid");
+            return;
+        }
+
         // Apple Pay available on iOS only
         _callbackContext.success();
     }
 
     private synchronized void presentDropInPaymentUI(final JSONArray args) throws JSONException {
+
+        if (_callbackContext == null) {
+            Log.e(TAG, "presentDropInPaymentUI exiting ==> callbackContext is invalid");
+            return;
+        }
 
         // Ensure the client has been initialized.
         if (temporaryToken == null) {
@@ -217,7 +246,7 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
 
         Log.i(TAG, "DropIn Activity Result: " + requestCode + ", " + resultCode);
 
-        if (_callbackContext == null) {
+        if (_resultContext == null) {
             Log.e(TAG, "onActivityResult exiting ==> callbackContext is invalid");
             return;
         }
@@ -237,7 +266,7 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
             if (intent != null && intent.getSerializableExtra(DropInActivity.EXTRA_ERROR) != null) {
                 Exception error = (Exception)intent.getSerializableExtra(DropInActivity.EXTRA_ERROR);
                 Log.e(TAG, "onActivityResult exiting ==> received error: " + error.getMessage() + "\n" + error.getStackTrace());
-                _callbackContext.error("onActivityResult exiting ==> received error: " + error.getMessage());
+                _resultContext.error("onActivityResult exiting ==> received error: " + error.getMessage());
                 return;
             }
 
@@ -245,14 +274,14 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
         }
         else if (requestCode == PAYMENT_BUTTON_REQUEST) {
             //TODO
-            _callbackContext.error("Activity result handler for PAYMENT_BUTTON_REQUEST not implemented.");
+            _resultContext.error("Activity result handler for PAYMENT_BUTTON_REQUEST not implemented.");
         }
         else if (requestCode == CUSTOM_REQUEST) {
-            _callbackContext.error("Activity result handler for CUSTOM_REQUEST not implemented.");
+            _resultContext.error("Activity result handler for CUSTOM_REQUEST not implemented.");
             //TODO
         }
         else if (requestCode == PAYPAL_REQUEST) {
-            _callbackContext.error("Activity result handler for PAYPAL_REQUEST not implemented.");
+            _resultContext.error("Activity result handler for PAYPAL_REQUEST not implemented.");
             //TODO
         } else {
             Log.w(TAG, "onActivityResult exiting ==> requestCode [" + requestCode + "] was unhandled");
@@ -269,7 +298,7 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
 
         Log.i(TAG, "handleDropInPaymentUiResult resultCode ==> " + resultCode + ", paymentMethodNonce = " + paymentMethodNonce);
 
-        if (_callbackContext == null) {
+        if (_resultContext == null) {
             Log.e(TAG, "handleDropInPaymentUiResult exiting ==> callbackContext is invalid");
             return;
         }
@@ -277,20 +306,20 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
         if (resultCode == Activity.RESULT_CANCELED) {
             Map<String, Object> resultMap = new HashMap<String, Object>();
             resultMap.put("userCancelled", true);
-            _callbackContext.success(new JSONObject(resultMap));
-            _callbackContext = null;
+            _resultContext.success(new JSONObject(resultMap));
+            _resultContext = null;
             return;
         }
 
         if (paymentMethodNonce == null) {
-            _callbackContext.error("Result was not RESULT_CANCELED, but no PaymentMethodNonce was returned from the Braintree SDK (was " + resultCode + ").");
-            _callbackContext = null;
+            _resultContext.error("Result was not RESULT_CANCELED, but no PaymentMethodNonce was returned from the Braintree SDK (was " + resultCode + ").");
+            _resultContext = null;
             return;
         }
 
         Map<String, Object> resultMap = this.getPaymentUINonceResult(paymentMethodNonce);
-        _callbackContext.success(new JSONObject(resultMap));
-        _callbackContext = null;
+        _resultContext.success(new JSONObject(resultMap));
+        _resultContext = null;
     }
 
     /**
@@ -365,6 +394,7 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
 
     @Override
     public void onPaymentMethodNonceCreated(PaymentMethodNonce paymentMethodNonce) {
+
         Log.i(TAG, "onPaymentMethodNonceCreated  ==> paymentMethodNonce = " + paymentMethodNonce);
 
         if (_callbackContext == null) {
