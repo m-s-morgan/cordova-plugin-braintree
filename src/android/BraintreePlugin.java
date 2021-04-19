@@ -36,7 +36,7 @@ import com.google.android.gms.wallet.WalletConstants;
 import java.util.HashMap;
 import java.util.Map;
 
-import io.sentry.util.Nullable;
+import androidx.annotation.Nullable;
 
 public final class BraintreePlugin extends CordovaPlugin implements PaymentMethodNonceCreatedListener, BraintreeErrorListener {
 
