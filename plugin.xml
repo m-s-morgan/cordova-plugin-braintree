@@ -81,13 +81,6 @@
             </array>
         </config-file>
 
-        <config-file target="*-Info.plist" parent="NSCameraUsageDescription">
-            <string>Allows you to scan credit card using your camera.</string>
-        </config-file>
-        <config-file target="*-Info.plist" parent="NSPhotoLibraryUsageDescription">
-            <string>Allows you to scan credit card using your camera.</string>
-        </config-file>
-
         <header-file src="src/ios/BraintreePlugin.h" />
         <source-file src="src/ios/BraintreePlugin.m" />
 
@@ -104,7 +97,7 @@
         <framework src="lib/ios/BraintreeUIKit.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/BraintreeUnionPay.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/BraintreeVenmo.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/CardIO.framework" custom="true" embed="true" weak="false" />
+        <framework src="lib/ios/CardinalMobile.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/PayPalDataCollector.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/PayPalOneTouch.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/PayPalUtils.framework" custom="true" embed="true" weak="false" />

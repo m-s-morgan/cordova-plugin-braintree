@@ -20,10 +20,15 @@
 #import <Braintree3DSecure/Braintree3DSecure.h>
 #import <BraintreeVenmo/BraintreeVenmo.h>
 #import "AppDelegate.h"
+#import <BraintreeDataCollector/BraintreeDataCollector.h>
+#import <BraintreePaymentFlow/BraintreePaymentFlow.h>
 
 @interface BraintreePlugin() <PKPaymentAuthorizationViewControllerDelegate>
 
 @property (nonatomic, strong) BTAPIClient *braintreeClient;
+@property (nonatomic, strong) BTDataCollector *dataCollector;
+@property (nonatomic, strong) NSString * _Nonnull deviceDataCollector;
+@property (nonatomic, strong, readwrite) BTPaymentFlowDriver *paymentFlowDriver;
 @property NSString* token;
 @property BOOL darkTheme;
 
@@ -105,6 +110,11 @@ NSString *countryCode;
         return;
     }
 
+    self.dataCollector = [[BTDataCollector alloc] initWithAPIClient:self.braintreeClient];
+    [self.dataCollector collectCardFraudData:^(NSString * _Nonnull deviceDataCollector) {
+        // Save deviceData
+        self.deviceDataCollector = deviceDataCollector;
+    }];
     NSString *bundle_id = [NSBundle mainBundle].bundleIdentifier;
     bundle_id = [bundle_id stringByAppendingString:@"braintree.payments"];
 
@@ -173,13 +183,46 @@ NSString *countryCode;
     }
 
     NSString* primaryDescription = [command.arguments objectAtIndex:1];
+    NSDictionary* threeDSecureOptions = [[NSDictionary alloc]init];
+    threeDSecureOptions = [command argumentAtIndex:2];
+
+
+    if (!threeDSecureOptions) {
+        CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"threeDSecure are required."];
+        [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
+        return;
+    }
+
+    NSNumber* threeDSecureAmount = threeDSecureOptions[@"amount"];
+    if (!threeDSecureAmount) {
+        CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString: @"You must provide an amount for 3D Secure"];
+        [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
+        return;
+    }
+
+    NSString* threeDSecureEmail = threeDSecureOptions[@"email"];
+    if (!threeDSecureEmail) {
+        CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString: @"You must provide an email for 3D Secure"];
+        [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
+        return;
+    }
+
 
     // Save off the Cordova callback ID so it can be used in the completion handlers.
     dropInUIcallbackId = command.callbackId;
 
+
+    /* Drop-IN 5.0 */
     BTDropInRequest *paymentRequest = [[BTDropInRequest alloc] init];
-    paymentRequest.amount = amount;
     paymentRequest.applePayDisabled = !applePayInited;
+    paymentRequest.vaultManager = YES;
+
+    paymentRequest.threeDSecureVerification = YES;
+    BTThreeDSecureRequest *threeDSecureRequest = [[BTThreeDSecureRequest alloc] init];
+    threeDSecureRequest.amount = [NSDecimalNumber decimalNumberWithString:amount];
+    threeDSecureRequest.email = threeDSecureEmail;
+    threeDSecureRequest.versionRequested = BTThreeDSecureVersion2;
+    paymentRequest.threeDSecureRequest = threeDSecureRequest;
 
     BTDropInController *dropIn = [[BTDropInController alloc] initWithAuthorization:self.token request:paymentRequest handler:^(BTDropInController * _Nonnull controller, BTDropInResult * _Nullable result, NSError * _Nullable error) {
         [self.viewController dismissViewControllerAnimated:YES completion:nil];
@@ -231,6 +274,19 @@ NSString *countryCode;
                         dropInUIcallbackId = nil;
                     }
                 } else {
+                    if (threeDSecureOptions && [result.paymentMethod isKindOfClass:[BTCardNonce class]]) {
+                        BTCardNonce *cardNonce = (BTCardNonce *)result.paymentMethod;
+                        if (!cardNonce.threeDSecureInfo.liabilityShiftPossible && cardNonce.threeDSecureInfo.wasVerified) {
+                            CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString: @"3D Secure liability cannot be shifted"];
+                            [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
+                            return;
+                        } else if (!cardNonce.threeDSecureInfo.liabilityShifted && cardNonce.threeDSecureInfo.wasVerified) {
+                            CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString: @"3D Secure liability was not shifted"];
+                            [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
+                            return;
+                        }
+                    }
+
                     NSDictionary *dictionary = [self getPaymentUINonceResult:result.paymentMethod];
 
                     CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:dictionary];
@@ -362,11 +418,13 @@ NSString *countryCode;
                                           },
 
                                   // BTThreeDSecureCardNonce Fields
-                                  @"threeDSecureCard": !threeDSecureCardNonce ? [NSNull null] : @{
+                                  @"threeDSecureInfo": !threeDSecureCardNonce ? [NSNull null] : @{
                                           @"liabilityShifted": threeDSecureCardNonce.liabilityShifted ? @YES : @NO,
                                           @"liabilityShiftPossible": threeDSecureCardNonce.liabilityShiftPossible ? @YES : @NO
                                           },
 
+                                  // BTThreeDSecureCardNonce Fields
+                                  @"deviceData": self.deviceDataCollector,
                                   // BTVenmoAccountNonce Fields
                                   @"venmoAccount": !venmoAccountNonce ? [NSNull null] : @{
                                           @"username": venmoAccountNonce.username
