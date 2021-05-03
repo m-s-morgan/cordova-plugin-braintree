@@ -299,9 +299,9 @@ NSString *countryCode;
     }];
 
     if (self.darkTheme) {
-        [BTUIKAppearance darkTheme];
+        [BTUIKAppearance sharedInstance].colorScheme = BTUIKColorSchemeDark;
     } else {
-        [BTUIKAppearance lightTheme];
+        [BTUIKAppearance sharedInstance].colorScheme = BTUIKColorSchemeLight;
     }
 
     [self.viewController presentViewController:dropIn animated:YES completion:nil];
