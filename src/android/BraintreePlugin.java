@@ -1,5 +1,5 @@
 /**
- * Fixing context confusion issue
+ * Fixing context confusion issues
  */
 
 package net.justincredible;
@@ -265,12 +265,11 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
         Log.i(TAG, "DropIn Activity Result: " + requestCode + ", " + resultCode);
 
         if (_resultContext == null) {
-            Log.e(TAG, "onActivityResult exiting ==> callbackContext is invalid");
+            Log.d(TAG, "onActivityResult exiting ==> callbackContext is invalid");
             return;
         }
 
         if (requestCode == DROP_IN_REQUEST) {
-
             PaymentMethodNonce paymentMethodNonce = null;
 
             if (resultCode == Activity.RESULT_OK) {
@@ -295,7 +294,15 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
                 this.handleDropInPaymentUiResult(resultCode, paymentMethodNonce, deviceData);
                 return;
             }
-            _callbackContext.error("Activity result handler for CUSTOM_REQUEST failed.");
+
+            if (resultCode == Activity.RESULT_CANCELED) {
+                Map<String, Object> resultMap = new HashMap<String, Object>();
+                resultMap.put("userCancelled", true);
+                _resultContext.success(new JSONObject(resultMap));
+                _resultContext = null;
+            } else {
+                _callbackContext.error("Activity result handler for CUSTOM_REQUEST failed.");
+            }
             return;
         } else if (requestCode == PAYMENT_BUTTON_REQUEST) {
             //TODO
