@@ -8,17 +8,17 @@ android {
 
 repositories {
     maven {
-        url "https://cardinalcommerce.bintray.com/android"
+        url "https://cardinalcommerceprod.jfrog.io/artifactory/android"
         credentials {
-            username 'braintree-team-sdk@cardinalcommerce'
-            password '220cc9476025679c4e5c843666c27d97cfb0f951'
+            username 'braintree_team_sdk'
+            password 'AKCp8jQcoDy2hxSWhDAUQKXLDPDx6NYRkqrgFLRc3qDrayg6rrCbJpsKKyMwaykVL8FWusJpp'
         }
     }
 }
 
 dependencies {
     api 'com.braintreepayments.api:braintree:3.+'
-    api 'com.braintreepayments.api:drop-in:4.+'
+    api 'com.braintreepayments.api:drop-in:5.2.2'
     api 'com.google.android.gms:play-services-wallet:+'
     api 'io.card:android-sdk:5.5.1'
     components.all {
