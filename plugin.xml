@@ -89,8 +89,8 @@
 			</config>
 			<pods use-frameworks="true">
 				<pod name="Braintree" spec="5.19.0"/>
-				<pod name="Braintree/DataCollector"/>
-				<pod name="Braintree/Venmo"/>
+				<!-- <pod name="Braintree/DataCollector"/>
+				<pod name="Braintree/Venmo"/> -->
 				<pod name="BraintreeDropIn" spec="9.7.0"/>
 			</pods>
 		</podspec>
