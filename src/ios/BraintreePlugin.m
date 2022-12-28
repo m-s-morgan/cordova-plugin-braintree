@@ -289,7 +289,7 @@ NSString *countryCode;
 }
 
 #pragma mark - PKPaymentAuthorizationViewControllerDelegate
-- (void)paymentAuthorizationViewController:(PKPaymentAuthorizationViewController *)controller didAuthorizePayment:(PKPayment *)payment completion:(void (^)(PKPaymentAuthorizationStatus status))completion {
+- (void)paymentAuthorizationViewController:(PKPaymentAuthorizationViewController *)controller didAuthorizePayment:(PKPayment *)payment handler:(void (^)(PKPaymentAuthorizationResult *result))completion {
     applePaySuccess = YES;
 
     BTApplePayClient *applePayClient = [[BTApplePayClient alloc] initWithAPIClient:self.braintreeClient];
@@ -305,7 +305,7 @@ NSString *countryCode;
             dropInUIcallbackId = nil;
 
             // Then indicate success or failure via the completion callback, e.g.
-            completion(PKPaymentAuthorizationStatusSuccess);
+            completion([[PKPaymentAuthorizationResult alloc] initWithStatus:PKPaymentAuthorizationStatusSuccess errors:[[NSMutableArray alloc] init]]);
         } else {
             // Tokenization failed. Check `error` for the cause of the failure.
             CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Apple Pay tokenization failed"];
@@ -314,7 +314,7 @@ NSString *countryCode;
             dropInUIcallbackId = nil;
 
             // Indicate failure via the completion callback:
-            completion(PKPaymentAuthorizationStatusFailure);
+            completion([[PKPaymentAuthorizationResult alloc] initWithStatus:PKPaymentAuthorizationStatusFailure errors:[NSArray arrayWithObjects:error, nil]]);
         }
     }];
 }
