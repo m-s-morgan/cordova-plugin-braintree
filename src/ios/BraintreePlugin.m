@@ -12,16 +12,16 @@
 #import <objc/runtime.h>
 #import <BraintreeDropIn/BraintreeDropIn.h>
 #import <BraintreeDropIn/BTDropInController.h>
-#import <BraintreeCore/BTAPIClient.h>
-#import <BraintreeCore/BTPaymentMethodNonce.h>
-#import <BraintreeCard/BTCardNonce.h>
-#import <BraintreePayPal/BraintreePayPal.h>
-#import <BraintreeApplePay/BraintreeApplePay.h>
-#import <Braintree3DSecure/Braintree3DSecure.h>
-#import <BraintreeVenmo/BraintreeVenmo.h>
+#import <Braintree/BTAPIClient.h>
+#import <Braintree/BTPaymentMethodNonce.h>
+#import <Braintree/BTCardNonce.h>
+#import <Braintree/BraintreePayPal.h>
+#import <Braintree/BraintreeApplePay.h>
+#import <Braintree/BraintreeThreeDSecure.h>
+#import <Braintree/BraintreeVenmo.h>
 #import "AppDelegate.h"
-#import <BraintreeDataCollector/BraintreeDataCollector.h>
-#import <BraintreePaymentFlow/BraintreePaymentFlow.h>
+#import <Braintree/BraintreeDataCollector.h>
+#import <Braintree/BraintreePaymentFlow.h>
 
 @interface BraintreePlugin() <PKPaymentAuthorizationViewControllerDelegate>
 
@@ -43,25 +43,7 @@
     bundle_id = [bundle_id stringByAppendingString:@"braintree.payments"];
 
     if ([url.scheme localizedCaseInsensitiveCompare:bundle_id] == NSOrderedSame) {
-        return [BTAppSwitch handleOpenURL:url options:options];
-    }
-
-    // all plugins will get the notification, and their handlers will be called
-    [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:CDVPluginHandleOpenURLNotification object:url]];
-
-    return NO;
-}
-
-// iOS 8
-- (BOOL)application:(UIApplication *)application
-            openURL:(NSURL *)url
-  sourceApplication:(NSString *)sourceApplication
-         annotation:(id)annotation {
-    NSString *bundle_id = [NSBundle mainBundle].bundleIdentifier;
-    bundle_id = [bundle_id stringByAppendingString:@"braintree.payments"];
-
-    if ([url.scheme localizedCaseInsensitiveCompare:bundle_id] == NSOrderedSame) {
-        return [BTAppSwitch handleOpenURL:url sourceApplication:sourceApplication];
+        return [BTAppContextSwitcher handleOpenURL:url];
     }
 
     // all plugins will get the notification, and their handlers will be called
@@ -111,14 +93,14 @@ NSString *countryCode;
     }
 
     self.dataCollector = [[BTDataCollector alloc] initWithAPIClient:self.braintreeClient];
-    [self.dataCollector collectCardFraudData:^(NSString * _Nonnull deviceDataCollector) {
+    [self.dataCollector collectDeviceData:^(NSString * _Nonnull deviceDataCollector) {
         // Save deviceData
         self.deviceDataCollector = deviceDataCollector;
     }];
     NSString *bundle_id = [NSBundle mainBundle].bundleIdentifier;
     bundle_id = [bundle_id stringByAppendingString:@"braintree.payments"];
 
-    [BTAppSwitch setReturnURLScheme:bundle_id];
+    [BTAppContextSwitcher setReturnURLScheme:bundle_id];
 
     CDVPluginResult *res = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
     [self.commandDelegate sendPluginResult:res callbackId:command.callbackId];
@@ -212,12 +194,11 @@ NSString *countryCode;
     dropInUIcallbackId = command.callbackId;
 
 
-    /* Drop-IN 5.0 */
+    /* Drop-IN 9.x */
     BTDropInRequest *paymentRequest = [[BTDropInRequest alloc] init];
     paymentRequest.applePayDisabled = !applePayInited;
     paymentRequest.vaultManager = YES;
 
-    paymentRequest.threeDSecureVerification = YES;
     BTThreeDSecureRequest *threeDSecureRequest = [[BTThreeDSecureRequest alloc] init];
     threeDSecureRequest.amount = [NSDecimalNumber decimalNumberWithString:amount];
     threeDSecureRequest.email = threeDSecureEmail;
@@ -232,7 +213,7 @@ NSString *countryCode;
 
             [self.commandDelegate sendPluginResult:pluginResult callbackId:dropInUIcallbackId];
             dropInUIcallbackId = nil;
-        } else if (result.cancelled) {
+        } else if (result.isCanceled) {
             if (dropInUIcallbackId) {
 
                 NSDictionary *dictionary = @{ @"userCancelled": @YES };
@@ -245,7 +226,7 @@ NSString *countryCode;
             }
         } else {
             if (dropInUIcallbackId) {
-                if (result.paymentOptionType == BTUIKPaymentOptionTypeApplePay ) {
+                if (result.paymentMethodType == BTDropInPaymentMethodTypeApplePay ) {
                     PKPaymentRequest *apPaymentRequest = [[PKPaymentRequest alloc] init];
                     apPaymentRequest.paymentSummaryItems = @[
                                                              [PKPaymentSummaryItem summaryItemWithLabel:primaryDescription amount:[NSDecimalNumber decimalNumberWithString: amount]]
@@ -299,9 +280,9 @@ NSString *countryCode;
     }];
 
     if (self.darkTheme) {
-        [BTUIKAppearance sharedInstance].colorScheme = BTUIKColorSchemeDark;
+        paymentRequest.uiCustomization = [[BTDropInUICustomization alloc] initWithColorScheme:BTDropInColorSchemeDark];
     } else {
-        [BTUIKAppearance sharedInstance].colorScheme = BTUIKColorSchemeLight;
+        paymentRequest.uiCustomization = [[BTDropInUICustomization alloc] initWithColorScheme:BTDropInColorSchemeLight];
     }
 
     [self.viewController presentViewController:dropIn animated:YES completion:nil];
@@ -365,7 +346,6 @@ NSString *countryCode;
     BTCardNonce *cardNonce;
     BTPayPalAccountNonce *payPalAccountNonce;
     BTApplePayCardNonce *applePayCardNonce;
-    BTThreeDSecureCardNonce *threeDSecureCardNonce;
     BTVenmoAccountNonce *venmoAccountNonce;
 
     if ([paymentMethodNonce isKindOfClass:[BTCardNonce class]]) {
@@ -380,10 +360,6 @@ NSString *countryCode;
         applePayCardNonce = (BTApplePayCardNonce*)paymentMethodNonce;
     }
 
-    if ([paymentMethodNonce isKindOfClass:[BTThreeDSecureCardNonce class]]) {
-        threeDSecureCardNonce = (BTThreeDSecureCardNonce*)paymentMethodNonce;
-    }
-
     if ([paymentMethodNonce isKindOfClass:[BTVenmoAccountNonce class]]) {
         venmoAccountNonce = (BTVenmoAccountNonce*)paymentMethodNonce;
     }
@@ -393,13 +369,22 @@ NSString *countryCode;
                                   // Standard Fields
                                   @"nonce": paymentMethodNonce.nonce,
                                   @"type": paymentMethodNonce.type,
-                                  @"localizedDescription": paymentMethodNonce.localizedDescription,
+                                  @"localizedDescription": !!venmoAccountNonce ? @"venmo" : !!applePayCardNonce ? @"apple pay" : !!payPalAccountNonce ? @"paypal" : @"card",
 
                                   // BTCardNonce Fields
                                   @"card": !cardNonce ? [NSNull null] : @{
                                           @"lastTwo": cardNonce.lastTwo,
-                                          @"network": [self formatCardNetwork:cardNonce.cardNetwork]
-                                          },
+                                          @"lastFour": cardNonce.lastFour,
+                                          @"expirationMonth": cardNonce.expirationMonth,
+                                          @"expirationYear": cardNonce.expirationYear,
+                                          @"cardholderName": cardNonce.cardholderName,
+                                          @"network": [self formatCardNetwork:cardNonce.cardNetwork],
+                                          @"threeDSecureInfo": !cardNonce.threeDSecureInfo ? [NSNull null] : @{
+                                              @"liabilityShifted": cardNonce.threeDSecureInfo.liabilityShifted ? @YES : @NO,
+                                              @"liabilityShiftPossible": cardNonce.threeDSecureInfo.liabilityShiftPossible ? @YES : @NO,
+                                              @"wasVerified": cardNonce.threeDSecureInfo.wasVerified ? @YES : @NO,
+                                              }
+                                  },
 
                                   // BTPayPalAccountNonce
                                   @"payPalAccount": !payPalAccountNonce ? [NSNull null] : @{
@@ -409,19 +394,17 @@ NSString *countryCode;
                                           @"phone": (payPalAccountNonce.phone == nil ? [NSNull null] : payPalAccountNonce.phone),
                                           //@"billingAddress" //TODO
                                           //@"shippingAddress" //TODO
-                                          @"clientMetadataId":  (payPalAccountNonce.clientMetadataId == nil ? [NSNull null] : payPalAccountNonce.clientMetadataId),
-                                          @"payerId": (payPalAccountNonce.payerId == nil ? [NSNull null] : payPalAccountNonce.payerId),
+                                          @"clientMetadataId":  (payPalAccountNonce.clientMetadataID == nil ? [NSNull null] : payPalAccountNonce.clientMetadataID),
+                                          @"payerId": (payPalAccountNonce.payerID == nil ? [NSNull null] : payPalAccountNonce.payerID),
                                           },
 
                                   // BTApplePayCardNonce
                                   @"applePayCard": !applePayCardNonce ? [NSNull null] : @{
-                                          },
-
-                                  // BTThreeDSecureCardNonce Fields
-                                  @"threeDSecureInfo": !threeDSecureCardNonce ? [NSNull null] : @{
-                                          @"liabilityShifted": threeDSecureCardNonce.liabilityShifted ? @YES : @NO,
-                                          @"liabilityShiftPossible": threeDSecureCardNonce.liabilityShiftPossible ? @YES : @NO
-                                          },
+                                      @"binData": !applePayCardNonce.binData ? [NSNull null] : @{
+                                          @"debit": applePayCardNonce.binData.debit ? @YES : @NO,
+                                          @"countryOfIssuance" : applePayCardNonce.binData.countryOfIssuance,
+                                      },
+                                  },
 
                                   // BTThreeDSecureCardNonce Fields
                                   @"deviceData": self.deviceDataCollector,
