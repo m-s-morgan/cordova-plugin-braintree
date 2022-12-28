@@ -82,8 +82,20 @@
 
         <header-file src="src/ios/BraintreePlugin.h" />
         <source-file src="src/ios/BraintreePlugin.m" />
+        
+        <podspec>
+			<config>
+				<source url="https://cdn.cocoapods.org/"/>
+			</config>
+			<pods use-frameworks="true">
+				<pod name="Braintree" spec="5.19.0"/>
+				<pod name="Braintree/DataCollector"/>
+				<pod name="Braintree/Venmo"/>
+				<pod name="BraintreeDropIn" spec="9.7.0"/>
+			</pods>
+		</podspec>
 
-        <framework src="lib/ios/Braintree3DSecure.framework" custom="true" embed="true" weak="false" />
+        <!-- <framework src="lib/ios/Braintree3DSecure.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/BraintreeAmericanExpress.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/BraintreeApplePay.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/BraintreeCard.framework" custom="true" embed="true" weak="false" />
@@ -99,7 +111,7 @@
         <framework src="lib/ios/CardinalMobile.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/PayPalDataCollector.framework" custom="true" embed="true" weak="false" />
         <framework src="lib/ios/PayPalOneTouch.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/PayPalUtils.framework" custom="true" embed="true" weak="false" />
+        <framework src="lib/ios/PayPalUtils.framework" custom="true" embed="true" weak="false" /> -->
 
     </platform>
 
