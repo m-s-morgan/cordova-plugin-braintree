@@ -27,6 +27,7 @@
         </config-file>
 
         <source-file src="src/android/BraintreePlugin.java" target-dir="src/net/justincredible" />
+        <source-file src="src/android/BraintreeFragment.java" target-dir="src/net/justincredible" />
 
         <framework src="com.android.support:support-v13:27.+" />
         <framework src="com.android.support:appcompat-v7:27.+" />

@@ -5,20 +5,14 @@
 package net.justincredible;
 
 import android.util.Log;
-import android.app.Activity;
-import android.content.Intent;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
-import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import com.braintreepayments.api.CardNonce;
-import com.braintreepayments.api.ClientTokenCallback;
-import com.braintreepayments.api.ClientTokenProvider;
-import com.braintreepayments.api.DropInActivity;
 import com.braintreepayments.api.DropInClient;
 import com.braintreepayments.api.DropInListener;
 import com.braintreepayments.api.DropInPaymentMethod;
@@ -34,7 +28,7 @@ import com.braintreepayments.api.ThreeDSecurePostalAddress;
 import com.braintreepayments.api.ThreeDSecureRequest;
 import com.braintreepayments.api.UserCanceledException;
 import com.braintreepayments.api.VenmoAccountNonce;
-// import com.braintreepayments.api.DataCollector;
+import com.braintreepayments.api.DataCollector;
 import com.braintreepayments.api.VenmoPaymentMethodUsage;
 import com.braintreepayments.api.VenmoRequest;
 import com.google.android.gms.wallet.TransactionInfo;
@@ -44,18 +38,18 @@ import java.util.Map;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
+import androidx.fragment.app.FragmentTransaction;
 
 public final class BraintreePlugin extends CordovaPlugin implements DropInListener {
 
     private static final String TAG = "BraintreePlugin";
-
-    private static final int DROP_IN_REQUEST = 100;
-    private static final int PAYMENT_BUTTON_REQUEST = 200;
-    private static final int CUSTOM_REQUEST = 300;
-    private static final int PAYPAL_REQUEST = 400;
+    private static final String FRAGMENT_TAG = "BraintreeFragment";
 
     private DropInClient dropInClient;
-    private PayPalRequest payPalRequest = null;
+    // private PayPalRequest payPalRequest = null;
     private DropInRequest dropInRequest = null;
     private CallbackContext _callbackContext = null;
     private CallbackContext _resultContext = null;
@@ -102,7 +96,6 @@ public final class BraintreePlugin extends CordovaPlugin implements DropInListen
     }
 
     public void onError(Exception error) {
-
         if (_callbackContext == null) {
             Log.e(TAG, "onError exiting ==> callbackContext is invalid");
             return;
@@ -115,6 +108,7 @@ public final class BraintreePlugin extends CordovaPlugin implements DropInListen
     // Actions
 
     private synchronized void initializeBT(final JSONArray args) throws Exception {
+        Log.d(TAG, "Initializing");
         if (_callbackContext == null) {
             Log.e(TAG, "initializeBT exiting ==> callbackContext is invalid");
             return;
@@ -134,12 +128,36 @@ public final class BraintreePlugin extends CordovaPlugin implements DropInListen
             return;
         }
 
-        dropInClient = new DropInClient(this.cordova.getActivity(), new BTClientTokenProvider(token));
-        dropInClient.setListener(this);
+        BraintreePlugin that = this;
+        AppCompatActivity aActivity = this.cordova.getActivity();
 
-        temporaryToken = token;
-        _callbackContext.success();
-        _callbackContext = null;
+        aActivity.runOnUiThread(new Runnable() {
+           @Override
+           public void run() {
+               BraintreeFragment mActivity = new BraintreeFragment(token);
+
+               mActivity.dropInClientCreated = new BTCallback() {
+                   @Override
+                   public void success() {
+                       dropInClient = mActivity.dropInClient;
+                       mActivity.setListener(that);
+                       temporaryToken = token;
+                       _callbackContext.success();
+                       _callbackContext = null;
+                   }
+               };
+
+               FragmentManager fm = aActivity.getSupportFragmentManager();
+               Fragment f = fm.findFragmentByTag(FRAGMENT_TAG);
+               FragmentTransaction ft = fm.beginTransaction();
+
+               if (f != null) {
+                   ft.remove(f);
+               }
+
+               ft.add(mActivity, FRAGMENT_TAG).commit();
+            }
+        });
     }
 
     private synchronized void setupApplePay() throws JSONException {
@@ -360,18 +378,5 @@ public final class BraintreePlugin extends CordovaPlugin implements DropInListen
         resultMap.put("userCancelled", true);
         _resultContext.success(new JSONObject(resultMap));
         _resultContext = null;
-    }
-
-    private class BTClientTokenProvider implements ClientTokenProvider {
-        String clientToken;
-
-        public BTClientTokenProvider(String ct) {
-            this.clientToken = ct;
-        }
-
-        @Override
-        public void getClientToken(@NonNull ClientTokenCallback callback) {
-            callback.onSuccess(this.clientToken);
-        }
     }
 }
