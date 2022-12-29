@@ -32,7 +32,7 @@
         <framework src="com.android.support:appcompat-v7:27.+" />
         <framework src="src/android/build-extras.gradle" custom="true" type="gradleReference" />
 
-        <config-file target="AndroidManifest.xml" parent="MainActivity">
+        <config-file target="AndroidManifest.xml" parent="/manifest/application/activity">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
