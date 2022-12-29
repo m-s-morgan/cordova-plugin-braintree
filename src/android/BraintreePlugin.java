@@ -302,7 +302,7 @@ public final class BraintreePlugin extends CordovaPlugin implements DropInListen
         DropInPaymentMethod paymentMethodType = dropInResult.getPaymentMethodType();
 
         if (paymentMethodType != null) {
-            resultMap.put("type", paymentMethodType.getLocalizedName());
+            resultMap.put("type", paymentMethodType.name());
         }
 
         // Card
