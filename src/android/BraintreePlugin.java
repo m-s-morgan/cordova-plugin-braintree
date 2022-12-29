@@ -15,31 +15,37 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import com.braintreepayments.api.BraintreeFragment;
-import com.braintreepayments.api.DataCollector;
-import com.braintreepayments.api.PayPal;
-import com.braintreepayments.api.dropin.DropInActivity;
-import com.braintreepayments.api.dropin.DropInRequest;
-import com.braintreepayments.api.dropin.DropInResult;
-import com.braintreepayments.api.interfaces.PaymentMethodNonceCreatedListener;
-import com.braintreepayments.api.interfaces.BraintreeErrorListener;
-import com.braintreepayments.api.models.CardNonce;
-import com.braintreepayments.api.models.GooglePaymentRequest;
-import com.braintreepayments.api.models.PayPalAccountNonce;
-import com.braintreepayments.api.models.PayPalRequest;
-import com.braintreepayments.api.models.PaymentMethodNonce;
-import com.braintreepayments.api.models.ThreeDSecureInfo;
-import com.braintreepayments.api.models.ThreeDSecurePostalAddress;
-import com.braintreepayments.api.models.ThreeDSecureRequest;
-import com.braintreepayments.api.models.VenmoAccountNonce;
+import com.braintreepayments.api.CardNonce;
+import com.braintreepayments.api.ClientTokenCallback;
+import com.braintreepayments.api.ClientTokenProvider;
+import com.braintreepayments.api.DropInActivity;
+import com.braintreepayments.api.DropInClient;
+import com.braintreepayments.api.DropInListener;
+import com.braintreepayments.api.DropInPaymentMethod;
+import com.braintreepayments.api.DropInRequest;
+import com.braintreepayments.api.DropInResult;
+import com.braintreepayments.api.GooglePayRequest;
+import com.braintreepayments.api.PayPalAccountNonce;
+import com.braintreepayments.api.PayPalRequest;
+import com.braintreepayments.api.PayPalVaultRequest;
+import com.braintreepayments.api.PaymentMethodNonce;
+import com.braintreepayments.api.ThreeDSecureInfo;
+import com.braintreepayments.api.ThreeDSecurePostalAddress;
+import com.braintreepayments.api.ThreeDSecureRequest;
+import com.braintreepayments.api.UserCanceledException;
+import com.braintreepayments.api.VenmoAccountNonce;
+// import com.braintreepayments.api.DataCollector;
+import com.braintreepayments.api.VenmoPaymentMethodUsage;
+import com.braintreepayments.api.VenmoRequest;
 import com.google.android.gms.wallet.TransactionInfo;
 import com.google.android.gms.wallet.WalletConstants;
 import java.util.HashMap;
 import java.util.Map;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-public final class BraintreePlugin extends CordovaPlugin implements PaymentMethodNonceCreatedListener, BraintreeErrorListener {
+public final class BraintreePlugin extends CordovaPlugin implements DropInListener {
 
     private static final String TAG = "BraintreePlugin";
 
@@ -48,11 +54,11 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
     private static final int CUSTOM_REQUEST = 300;
     private static final int PAYPAL_REQUEST = 400;
 
+    private DropInClient dropInClient;
     private PayPalRequest payPalRequest = null;
     private DropInRequest dropInRequest = null;
     private CallbackContext _callbackContext = null;
     private CallbackContext _resultContext = null;
-    private BraintreeFragment braintreeFragment = null;
     private String temporaryToken = null;
 
     @Override
@@ -110,7 +116,6 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
     // Actions
 
     private synchronized void initializeBT(final JSONArray args) throws Exception {
-
         if (_callbackContext == null) {
             Log.e(TAG, "initializeBT exiting ==> callbackContext is invalid");
             return;
@@ -129,6 +134,9 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
             _callbackContext.error("A token is required.");
             return;
         }
+
+        dropInClient = new DropInClient(this.cordova.getActivity(), new BTClientTokenProvider(token));
+        dropInClient.setListener(this);
 
         temporaryToken = token;
         _callbackContext.success();
@@ -154,24 +162,24 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
      * @param merchantId
      */
     private void enableGooglePay(DropInRequest dropInRequest, String amount, String currency, @Nullable String merchantId) {
-        GooglePaymentRequest googlePaymentRequest = new GooglePaymentRequest()
-                .transactionInfo(TransactionInfo.newBuilder()
+        GooglePayRequest googlePaymentRequest = new GooglePayRequest();
+
+        googlePaymentRequest.setTransactionInfo(TransactionInfo.newBuilder()
                         .setTotalPrice(amount)
                         .setTotalPriceStatus(WalletConstants.TOTAL_PRICE_STATUS_FINAL)
                         .setCurrencyCode(currency)
-                        .build())
-                        .billingAddressRequired(true);
+                        .build());
+
+        googlePaymentRequest.setBillingAddressRequired(true);
 
         if (merchantId != null && merchantId.length() > 0) {
-            googlePaymentRequest.googleMerchantId(merchantId);
+            googlePaymentRequest.setGoogleMerchantId(merchantId);
         }
 
-
-        dropInRequest.googlePaymentRequest(googlePaymentRequest);
+        dropInRequest.setGooglePayRequest(googlePaymentRequest);
     }
 
     private synchronized void presentDropInPaymentUI(final JSONArray args) throws JSONException {
-
         if (_callbackContext == null) {
             Log.e(TAG, "presentDropInPaymentUI exiting ==> callbackContext is invalid");
             return;
@@ -183,10 +191,9 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
             return;
         }
 
-        String btToken = temporaryToken;
         temporaryToken = null;
 
-        dropInRequest = new DropInRequest().clientToken(btToken);
+        dropInRequest = new DropInRequest();
 
         if (dropInRequest == null) {
             _callbackContext.error("The Braintree client failed to initialize.");
@@ -215,34 +222,29 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
             if (threeDSecure == null) {
                 _callbackContext.error("threeDSecure is required.");
             }
+            
+            // dropInRequest.collectDeviceData(true);
+            dropInRequest.setVaultManagerEnabled(true);
 
-            dropInRequest.amount(amount);
             ThreeDSecureRequest threeDSecureRequest = new ThreeDSecureRequest();
-            threeDSecureRequest.amount(threeDSecure.getString("amount"));
-            threeDSecureRequest.email(threeDSecure.getString("email"));
-            threeDSecureRequest.versionRequested(ThreeDSecureRequest.VERSION_2);
-            ThreeDSecurePostalAddress address = new ThreeDSecurePostalAddress().givenName(threeDSecure.getString("firstName")).surname(threeDSecure.getString("lastName"));
-            threeDSecureRequest.billingAddress(address);
-            dropInRequest.requestThreeDSecureVerification(true);
-            dropInRequest.collectDeviceData(true);
-            dropInRequest.vaultManager(true);
-            dropInRequest.threeDSecureRequest(threeDSecureRequest);
+            threeDSecureRequest.setAmount(threeDSecure.getString("amount"));
+            threeDSecureRequest.setEmail(threeDSecure.getString("email"));
+            threeDSecureRequest.setVersionRequested(ThreeDSecureRequest.VERSION_2);
+            ThreeDSecurePostalAddress address = new ThreeDSecurePostalAddress();
+            address.setGivenName(threeDSecure.getString("firstName"));
+            address.setSurname(threeDSecure.getString("lastName"));
+            threeDSecureRequest.setBillingAddress(address);
+            dropInRequest.setThreeDSecureRequest(threeDSecureRequest);
+
+            PayPalVaultRequest payPalRequest = new PayPalVaultRequest();
+            dropInRequest.setPayPalRequest(payPalRequest);
+            dropInRequest.setVenmoRequest(new VenmoRequest(VenmoPaymentMethodUsage.MULTI_USE));
 
             if (googlePay != null) {
                 enableGooglePay(dropInRequest, amount, googlePay.getString("currency"), googlePay.getString("merchantId"));
             }
 
-            this.cordova.setActivityResultCallback(this);
-
-            Intent intent = dropInRequest.getIntent(this.cordova.getActivity());
-
-            if (intent == null) {
-                Log.e(TAG, "presentDropInPaymentUI failed ===> unable to create Braintree DropInRequest");
-                _callbackContext.error(TAG + ": presentDropInPaymentUI failed ===> unable to create Braintree DropInRequest");
-                return;
-            }
-
-            this.cordova.startActivityForResult(this, intent, DROP_IN_REQUEST);
+            dropInClient.launchDropIn(dropInRequest);
         } catch (Exception e) {
             Log.e(TAG, "presentDropInPaymentUI failed with error ===> " + e.getMessage());
             _callbackContext.error(TAG + ": presentDropInPaymentUI failed with error ===> " + e.getMessage());
@@ -250,141 +252,60 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
     }
 
     private synchronized void paypalProcess(final JSONArray args) throws Exception {
-        payPalRequest = new PayPalRequest(args.getString(0));
-        payPalRequest.currencyCode(args.getString(1));
-        PayPal.requestOneTimePayment(braintreeFragment, payPalRequest);
+        // MAYBE TODO
+        // payPalRequest = new PayPalRequest(args.getString(0));
+        // payPalRequest.currencyCode(args.getString(1));
+        // PayPal.requestOneTimePayment(braintreeFragment, payPalRequest);
     }
 
     private synchronized void paypalProcessVaulted() throws Exception {
-        PayPal.requestBillingAgreement(braintreeFragment, payPalRequest);
+        // MAYBE TODO
+        // PayPal.requestBillingAgreement(braintreeFragment, payPalRequest);
     }
-
-    // Results
 
     @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent intent) {
-        super.onActivityResult(requestCode, resultCode, intent);
-
-        Log.i(TAG, "DropIn Activity Result: " + requestCode + ", " + resultCode);
-
-        if (_resultContext == null) {
-            Log.d(TAG, "onActivityResult exiting ==> callbackContext is invalid");
-            return;
-        }
-
-        if (requestCode == DROP_IN_REQUEST) {
-            PaymentMethodNonce paymentMethodNonce = null;
-
-            if (resultCode == Activity.RESULT_OK) {
-                if (intent != null) {
-                    DropInResult result = intent.getParcelableExtra(DropInResult.EXTRA_DROP_IN_RESULT);
-                    paymentMethodNonce = result.getPaymentMethodNonce();
-                }
-
-                Log.i(TAG, "DropIn Activity Result: paymentMethodNonce = " + paymentMethodNonce);
-            }
-
-            // handle errors here, an exception may be available in
-            if (intent != null && intent.getSerializableExtra(DropInActivity.EXTRA_ERROR) != null) {
-                Exception error = (Exception) intent.getSerializableExtra(DropInActivity.EXTRA_ERROR);
-                Log.e(TAG, "onActivityResult exiting ==> received error: " + error.getMessage() + "\n" + error.getStackTrace());
-                _callbackContext.error("onActivityResult exiting ==> received error: " + error.getMessage());
-                return;
-            }
-            if (intent != null) {
-                DropInResult result = intent.getParcelableExtra(DropInResult.EXTRA_DROP_IN_RESULT);
-                String deviceData = result.getDeviceData();
-                this.handleDropInPaymentUiResult(resultCode, paymentMethodNonce, deviceData);
-                return;
-            }
-
-            if (resultCode == Activity.RESULT_CANCELED) {
-                Map<String, Object> resultMap = new HashMap<String, Object>();
-                resultMap.put("userCancelled", true);
-                _resultContext.success(new JSONObject(resultMap));
-                _resultContext = null;
-            } else {
-                _callbackContext.error("Activity result handler for CUSTOM_REQUEST failed.");
-            }
-            return;
-        } else if (requestCode == PAYMENT_BUTTON_REQUEST) {
-            //TODO
-            _callbackContext.error("Activity result handler for PAYMENT_BUTTON_REQUEST not implemented.");
-        } else if (requestCode == CUSTOM_REQUEST) {
-            _callbackContext.error("Activity result handler for CUSTOM_REQUEST not implemented.");
-            //TODO
-        } else if (requestCode == PAYPAL_REQUEST) {
-            _callbackContext.error("Activity result handler for PAYPAL_REQUEST not implemented.");
-            //TODO
-        } else {
-            Log.w(TAG, "onActivityResult exiting ==> requestCode [" + requestCode + "] was unhandled");
-        }
-    }
-
-    /**
-     * Helper used to handle the result of the drop-in payment UI.
-     *
-     * @param resultCode         Indicates the result of the UI.
-     * @param paymentMethodNonce Contains information about a successful payment.
-     */
-    private void handleDropInPaymentUiResult(int resultCode, PaymentMethodNonce paymentMethodNonce, String deviceData) {
-
-        Log.i(TAG, "handleDropInPaymentUiResult resultCode ==> " + resultCode + ", paymentMethodNonce = " + paymentMethodNonce);
+    public void onDropInSuccess(@NonNull DropInResult dropInResult) {
+        PaymentMethodNonce nonce = dropInResult.getPaymentMethodNonce();
 
         if (_resultContext == null) {
             Log.e(TAG, "handleDropInPaymentUiResult exiting ==> callbackContext is invalid");
             return;
-        }
-
-        if (resultCode == Activity.RESULT_CANCELED) {
-            Map<String, Object> resultMap = new HashMap<String, Object>();
-            resultMap.put("userCancelled", true);
-            _resultContext.success(new JSONObject(resultMap));
+        } else if (nonce == null) {
+            _resultContext.error("Result was not RESULT_CANCELED, but no PaymentMethodNonce was returned from the Braintree SDK.");
             _resultContext = null;
             return;
         }
-
-        if (paymentMethodNonce == null) {
-            _resultContext.error("Result was not RESULT_CANCELED, but no PaymentMethodNonce was returned from the Braintree SDK (was " + resultCode + ").");
-            _resultContext = null;
-            return;
-        }
-
-        Map<String, Object> resultMap = this.getPaymentUINonceResult(paymentMethodNonce, deviceData);
-        _resultContext.success(new JSONObject(resultMap));
-        _resultContext = null;
-    }
-
-    /**
-     * Helper used to return a dictionary of values from the given payment method nonce.
-     * Handles several different types of nonces (eg for cards, PayPal, etc).
-     *
-     * @param paymentMethodNonce The nonce used to build a dictionary of data from.
-     * @return The dictionary of data populated via the given payment method nonce.
-     */
-    private Map<String, Object> getPaymentUINonceResult(PaymentMethodNonce paymentMethodNonce, String deviceData) {
 
         Map<String, Object> resultMap = new HashMap<String, Object>();
 
-        resultMap.put("nonce", paymentMethodNonce.getNonce());
-        resultMap.put("deviceData", deviceData);
-        resultMap.put("type", paymentMethodNonce.getTypeLabel());
-        resultMap.put("localizedDescription", paymentMethodNonce.getDescription());
+        resultMap.put("nonce", nonce.getString());
+        resultMap.put("deviceData", dropInResult.getDeviceData());
+        resultMap.put("localizedDescription", dropInResult.getPaymentDescription());
+
+        DropInPaymentMethod paymentMethodType = dropInResult.getPaymentMethodType();
+
+        if (paymentMethodType != null) {
+            resultMap.put("type", paymentMethodType.getLocalizedName());
+        }
 
         // Card
-        if (paymentMethodNonce instanceof CardNonce) {
-            CardNonce cardNonce = (CardNonce) paymentMethodNonce;
+        if (nonce instanceof CardNonce) {
+            CardNonce cardNonce = (CardNonce) nonce;
 
             Map<String, Object> innerMap = new HashMap<String, Object>();
             innerMap.put("lastTwo", cardNonce.getLastTwo());
+            innerMap.put("lastFour", cardNonce.getLastFour());
+            innerMap.put("expirationMonth", cardNonce.getExpirationMonth());
+            innerMap.put("expirationYear", cardNonce.getExpirationYear());
+            innerMap.put("cardholderName", cardNonce.getCardholderName());
             innerMap.put("network", cardNonce.getCardType());
 
             resultMap.put("card", innerMap);
         }
 
         // PayPal
-        if (paymentMethodNonce instanceof PayPalAccountNonce) {
-            PayPalAccountNonce payPalAccountNonce = (PayPalAccountNonce) paymentMethodNonce;
+        if (nonce instanceof PayPalAccountNonce) {
+            PayPalAccountNonce payPalAccountNonce = (PayPalAccountNonce) nonce;
 
             Map<String, Object> innerMap = new HashMap<String, Object>();
             resultMap.put("email", payPalAccountNonce.getEmail());
@@ -398,22 +319,23 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
         }
 
         // 3D Secure
-        if (paymentMethodNonce instanceof CardNonce) {
-            CardNonce cardNonce = (CardNonce) paymentMethodNonce;
+        if (nonce instanceof CardNonce) {
+            CardNonce cardNonce = (CardNonce) nonce;
             ThreeDSecureInfo threeDSecureInfo = cardNonce.getThreeDSecureInfo();
 
             if (threeDSecureInfo != null) {
                 Map<String, Object> innerMap = new HashMap<String, Object>();
                 innerMap.put("liabilityShifted", threeDSecureInfo.isLiabilityShifted());
                 innerMap.put("liabilityShiftPossible", threeDSecureInfo.isLiabilityShiftPossible());
+                innerMap.put("wasVerified", threeDSecureInfo.wasVerified());
 
                 resultMap.put("threeDSecureInfo", innerMap);
             }
         }
 
         // Venmo
-        if (paymentMethodNonce instanceof VenmoAccountNonce) {
-            VenmoAccountNonce venmoAccountNonce = (VenmoAccountNonce) paymentMethodNonce;
+        if (nonce instanceof VenmoAccountNonce) {
+            VenmoAccountNonce venmoAccountNonce = (VenmoAccountNonce) nonce;
 
             Map<String, Object> innerMap = new HashMap<String, Object>();
             innerMap.put("username", venmoAccountNonce.getUsername());
@@ -421,36 +343,36 @@ public final class BraintreePlugin extends CordovaPlugin implements PaymentMetho
             resultMap.put("venmoAccount", innerMap);
         }
 
-        return resultMap;
+        Log.i(TAG, "handleDropInPaymentUiResult nonce = " + nonce.getString());
+
+        _resultContext.success(new JSONObject(resultMap));
+        _resultContext = null;
     }
 
     @Override
-    public void onPaymentMethodNonceCreated(PaymentMethodNonce paymentMethodNonce) {
-        Log.i(TAG, "onPaymentMethodNonceCreated  ==> paymentMethodNonce = " + paymentMethodNonce);
-
-        if (_callbackContext == null) {
-            Log.e(TAG, "onPaymentMethodNonceCreated exiting ==> callbackContext is invalid");
+    public void onDropInFailure(@NonNull Exception error) {
+        boolean isUserCanceled = (error instanceof UserCanceledException);
+        if (!isUserCanceled) {
+            this.onError(error);
             return;
         }
 
-        try {
-            JSONObject json = new JSONObject();
+        Map<String, Object> resultMap = new HashMap<String, Object>();
+        resultMap.put("userCancelled", true);
+        _resultContext.success(new JSONObject(resultMap));
+        _resultContext = null;
+    }
 
-            json.put("nonce", paymentMethodNonce.getNonce().toString());
-//            json.put("deviceData", DataCollector.collectDeviceData(braintreeFragment));
-            // json.put("deviceData", DataCollector.collectDeviceData(braintreeFragment, this));
+    private class BTClientTokenProvider implements ClientTokenProvider {
+        String clientToken;
 
-            if (paymentMethodNonce instanceof PayPalAccountNonce) {
-                PayPalAccountNonce pp = (PayPalAccountNonce) paymentMethodNonce;
-                json.put("payerId", pp.getPayerId().toString());
-                json.put("firstName", pp.getFirstName().toString());
-                json.put("lastName", pp.getLastName().toString());
-            }
+        public BTClientTokenProvider(String ct) {
+            this.clientToken = ct;
+        }
 
-            _callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, json));
-        } catch (Exception e) {
-            Log.e(TAG, "onPaymentMethodNonceCreated  ==> error:" + e.getMessage());
-            e.printStackTrace();
+        @Override
+        public void getClientToken(@NonNull ClientTokenCallback callback) {
+            callback.onSuccess(this.clientToken);
         }
     }
 }
