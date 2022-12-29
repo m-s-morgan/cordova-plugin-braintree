@@ -101,7 +101,6 @@ public final class BraintreePlugin extends CordovaPlugin implements DropInListen
         return true;
     }
 
-    @Override
     public void onError(Exception error) {
 
         if (_callbackContext == null) {
