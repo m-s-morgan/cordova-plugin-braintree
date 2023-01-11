@@ -205,6 +205,12 @@ NSString *countryCode;
     threeDSecureRequest.versionRequested = BTThreeDSecureVersion2;
     paymentRequest.threeDSecureRequest = threeDSecureRequest;
 
+    if (self.darkTheme) {
+        paymentRequest.uiCustomization = [[BTDropInUICustomization alloc] initWithColorScheme:BTDropInColorSchemeDark];
+    } else {
+        paymentRequest.uiCustomization = [[BTDropInUICustomization alloc] initWithColorScheme:BTDropInColorSchemeLight];
+    }
+
     BTDropInController *dropIn = [[BTDropInController alloc] initWithAuthorization:self.token request:paymentRequest handler:^(BTDropInController * _Nonnull controller, BTDropInResult * _Nullable result, NSError * _Nullable error) {
         [self.viewController dismissViewControllerAnimated:YES completion:nil];
         if (error != nil) {
@@ -278,12 +284,6 @@ NSString *countryCode;
             }
         }
     }];
-
-    if (self.darkTheme) {
-        paymentRequest.uiCustomization = [[BTDropInUICustomization alloc] initWithColorScheme:BTDropInColorSchemeDark];
-    } else {
-        paymentRequest.uiCustomization = [[BTDropInUICustomization alloc] initWithColorScheme:BTDropInColorSchemeLight];
-    }
 
     [self.viewController presentViewController:dropIn animated:YES completion:nil];
 }
