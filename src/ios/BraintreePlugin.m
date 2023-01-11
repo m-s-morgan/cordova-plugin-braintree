@@ -367,42 +367,42 @@ NSString *countryCode;
     NSDictionary *dictionary = @{ @"userCancelled": @NO,
 
                                   // Standard Fields
-                                  @"nonce": paymentMethodNonce.nonce,
-                                  @"type": paymentMethodNonce.type,
+                                  @"nonce": (paymentMethodNonce.nonce == nil ? [NSNull null] : paymentMethodNonce.nonce),
+                                  @"type": (paymentMethodNonce.type == nil ? [NSNull null] : paymentMethodNonce.type),
                                   @"localizedDescription": !!venmoAccountNonce ? @"venmo" : !!applePayCardNonce ? @"apple pay" : !!payPalAccountNonce ? @"paypal" : @"card",
 
                                   // BTCardNonce Fields
                                   @"card": !cardNonce ? [NSNull null] : @{
-                                          @"lastTwo": cardNonce.lastTwo,
-                                          @"lastFour": cardNonce.lastFour,
-                                          @"expirationMonth": cardNonce.expirationMonth,
-                                          @"expirationYear": cardNonce.expirationYear,
-                                          @"cardholderName": cardNonce.cardholderName,
-                                          @"network": [self formatCardNetwork:cardNonce.cardNetwork],
-                                          @"threeDSecureInfo": !cardNonce.threeDSecureInfo ? [NSNull null] : @{
-                                              @"liabilityShifted": cardNonce.threeDSecureInfo.liabilityShifted ? @YES : @NO,
-                                              @"liabilityShiftPossible": cardNonce.threeDSecureInfo.liabilityShiftPossible ? @YES : @NO,
-                                              @"wasVerified": cardNonce.threeDSecureInfo.wasVerified ? @YES : @NO,
-                                              }
+                                        @"lastTwo": (cardNonce.lastTwo == nil ? [NSNull null] : cardNonce.lastTwo),
+                                        @"lastFour": (cardNonce.lastFour == nil ? [NSNull null] : cardNonce.lastFour),
+                                        @"expirationMonth": (cardNonce.expirationMonth == nil ? [NSNull null] : cardNonce.expirationMonth),
+                                        @"expirationYear": (cardNonce.expirationYear == nil ? [NSNull null] : cardNonce.expirationYear),
+                                        @"cardholderName": (cardNonce.cardholderName == nil ? [NSNull null] : cardNonce.cardholderName),
+                                        @"network": [self formatCardNetwork:cardNonce.cardNetwork],
+                                        @"threeDSecureInfo": !cardNonce.threeDSecureInfo ? [NSNull null] : @{
+                                            @"liabilityShifted": cardNonce.threeDSecureInfo.liabilityShifted ? @YES : @NO,
+                                            @"liabilityShiftPossible": cardNonce.threeDSecureInfo.liabilityShiftPossible ? @YES : @NO,
+                                            @"wasVerified": cardNonce.threeDSecureInfo.wasVerified ? @YES : @NO,
+                                        }
                                   },
 
                                   // BTPayPalAccountNonce
                                   @"payPalAccount": !payPalAccountNonce ? [NSNull null] : @{
-                                          @"email": payPalAccountNonce.email,
-                                          @"firstName": (payPalAccountNonce.firstName == nil ? [NSNull null] : payPalAccountNonce.firstName),
-                                          @"lastName": (payPalAccountNonce.lastName == nil ? [NSNull null] : payPalAccountNonce.lastName),
-                                          @"phone": (payPalAccountNonce.phone == nil ? [NSNull null] : payPalAccountNonce.phone),
-                                          //@"billingAddress" //TODO
-                                          //@"shippingAddress" //TODO
-                                          @"clientMetadataId":  (payPalAccountNonce.clientMetadataID == nil ? [NSNull null] : payPalAccountNonce.clientMetadataID),
-                                          @"payerId": (payPalAccountNonce.payerID == nil ? [NSNull null] : payPalAccountNonce.payerID),
-                                          },
+                                        @"email": (payPalAccountNonce.email == nil ? [NSNull null] : payPalAccountNonce.email),
+                                        @"firstName": (payPalAccountNonce.firstName == nil ? [NSNull null] : payPalAccountNonce.firstName),
+                                        @"lastName": (payPalAccountNonce.lastName == nil ? [NSNull null] : payPalAccountNonce.lastName),
+                                        @"phone": (payPalAccountNonce.phone == nil ? [NSNull null] : payPalAccountNonce.phone),
+                                        //@"billingAddress" //TODO
+                                        //@"shippingAddress" //TODO
+                                        @"clientMetadataId":  (payPalAccountNonce.clientMetadataID == nil ? [NSNull null] : payPalAccountNonce.clientMetadataID),
+                                        @"payerId": (payPalAccountNonce.payerID == nil ? [NSNull null] : payPalAccountNonce.payerID),
+                                  },
 
                                   // BTApplePayCardNonce
                                   @"applePayCard": !applePayCardNonce ? [NSNull null] : @{
                                       @"binData": !applePayCardNonce.binData ? [NSNull null] : @{
                                           @"debit": applePayCardNonce.binData.debit ? @YES : @NO,
-                                          @"countryOfIssuance" : applePayCardNonce.binData.countryOfIssuance,
+                                          @"countryOfIssuance" : (applePayCardNonce.binData.countryOfIssuance == nil ? [NSNull null] : applePayCardNonce.binData.countryOfIssuance),
                                       },
                                   },
 
@@ -410,9 +410,9 @@ NSString *countryCode;
                                   @"deviceData": self.deviceDataCollector,
                                   // BTVenmoAccountNonce Fields
                                   @"venmoAccount": !venmoAccountNonce ? [NSNull null] : @{
-                                          @"username": venmoAccountNonce.username
-                                          }
-                                  };
+                                      @"username": (venmoAccountNonce.username == nil ? [NSNull null] : venmoAccountNonce.username)
+                                  }
+                              };
     return dictionary;
 }
 
