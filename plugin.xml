@@ -87,11 +87,11 @@
 				<source url="https://cdn.cocoapods.org/"/>
 			</config>
 			<pods use-frameworks="true">
-				<pod name="Braintree" spec="5.17.0"/>
+				<pod name="Braintree" spec="5.20.1"/>
 				<pod name="Braintree/ThreeDSecure"/>
 				<pod name="Braintree/DataCollector"/>
 				<pod name="Braintree/Venmo"/>
-				<pod name="BraintreeDropIn" spec="9.7.0"/>
+				<pod name="BraintreeDropIn" spec="9.8.0"/>
 			</pods>
 		</podspec>
 

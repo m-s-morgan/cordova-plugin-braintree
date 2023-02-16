@@ -17,7 +17,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.braintreepayments.api:drop-in:6.7.0'
+    implementation 'com.braintreepayments.api:drop-in:6.8.0'
 }
 
 def getPackageName() {
