@@ -91,7 +91,7 @@
 				<pod name="Braintree/ThreeDSecure"/>
 				<pod name="Braintree/DataCollector"/>
 				<pod name="Braintree/Venmo"/>
-				<pod name="BraintreeDropIn" spec="9.8.2"/>
+				<pod name="BraintreeDropIn"/>
 			</pods>
 		</podspec>
 
