@@ -1,7 +1,7 @@
 {
   "name": "cordova-plugin-braintree",
-  "version": "0.6.5",
-  "description": "A Cordova plugin for the Braintree mobile payment processing SDK.",
+  "version": "1.0.0",
+  "description": "A Cordova plugin for PayPal and Venmo through the Braintree native SDKs (iOS v7, Android v5).",
   "cordova": {
     "id": "cordova-plugin-braintree",
     "platforms": [
@@ -11,18 +11,25 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/engineerapart/cordova-plugin-braintree"
+    "url": "https://github.com/m-s-morgan/cordova-plugin-braintree"
   },
   "keywords": [
     "cordova",
     "braintree",
+    "paypal",
+    "venmo",
     "payment",
     "ecosystem:cordova",
     "cordova-android",
     "cordova-ios"
   ],
-  "license": "MIT",
-  "dependencies": {
-    "xcode": "1.0.0"
-  }
+  "engines": {
+    "cordovaDependencies": {
+      "1.0.0": {
+        "cordova-ios": ">=8.0.0",
+        "cordova-android": ">=12.0.0"
+      }
+    }
+  },
+  "license": "MIT"
 }

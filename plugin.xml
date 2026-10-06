@@ -2,15 +2,26 @@
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
         xmlns:android="http://schemas.android.com/apk/res/android"
         id="cordova-plugin-braintree"
-        version="0.6.5">
+        version="1.0.0">
 
     <name>Braintree Plugin</name>
 
     <description>
-        A Cordova plugin for the Braintree mobile payment processing SDK.
+        PayPal and Venmo through the Braintree native SDKs (iOS v7, Android v5): a client token in, a
+        payment method nonce out. No Drop-in (Braintree retired it), no card entry, no wallets.
     </description>
 
     <license>MIT</license>
+
+    <engines>
+        <engine name="cordova-ios" version=">=8.0.0" />
+        <engine name="cordova-android" version=">=12.0.0" />
+    </engines>
+
+    <!-- The universal link / App Link PayPal and Venmo return to: https://$HOST$PATH. The host must
+         serve an apple-app-site-association listing "$PATH/*" and an assetlinks.json for the app. -->
+    <preference name="BRAINTREE_RETURN_HOST" default="pr.fit" />
+    <preference name="BRAINTREE_RETURN_PATH" default="/braintree-payments" />
 
     <!-- JavaScript Interface -->
     <js-module src="www/braintree-plugin.js" name="BraintreePlugin">
@@ -26,14 +37,24 @@
             </feature>
         </config-file>
 
-        <source-file src="src/android/BraintreePlugin.java" target-dir="src/net/justincredible" />
-        <source-file src="src/android/BraintreeFragment.java" target-dir="src/net/justincredible" />
+        <config-file target="res/xml/config.xml" parent="/*">
+            <preference name="BraintreeReturnHost" value="$BRAINTREE_RETURN_HOST" />
+            <preference name="BraintreeReturnPath" value="$BRAINTREE_RETURN_PATH" />
+        </config-file>
 
-        <framework src="com.android.support:support-v13:27.+" />
-        <framework src="com.android.support:appcompat-v7:27.+" />
+        <source-file src="src/android/BraintreePlugin.java" target-dir="src/net/justincredible" />
+
         <framework src="src/android/build-extras.gradle" custom="true" type="gradleReference" />
 
+        <!-- the browser / app switch returns: the App Link the SDK is given, and the deep-link
+             scheme it falls back to (must be the application id followed by .braintree) -->
         <config-file target="AndroidManifest.xml" parent="/manifest/application/activity">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="$BRAINTREE_RETURN_HOST" android:pathPrefix="$BRAINTREE_RETURN_PATH" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -42,15 +63,17 @@
             </intent-filter>
         </config-file>
 
+        <!-- the Venmo app, for the app-switch availability check on Android 11+ -->
+        <config-file target="AndroidManifest.xml" parent="/manifest">
+            <queries>
+                <package android:name="com.venmo" />
+            </queries>
+        </config-file>
+
     </platform>
 
     <!-- iOS Configuration -->
     <platform name="ios">
-
-	<!-- Hook to embed iOS frameworks after ios platform added -->
-	    <hook type="after_platform_add" src="scripts/add_embedded_ios_frameworks.js" />
-	<!-- Hook to embed iOS frameworks after installation -->
-	    <hook type="after_plugin_install" src="scripts/add_embedded_ios_frameworks.js" />
 
         <config-file target="config.xml" parent="/*">
             <feature name="BraintreePlugin">
@@ -58,60 +81,31 @@
             </feature>
         </config-file>
 
-        <config-file target="*-Info.plist" parent="LSApplicationQueriesSchemes">
-          <array>
-            <string>com.paypal.ppclient.touch.v1</string>
-            <string>com.paypal.ppclient.touch.v2</string>
-            <string>com.venmo.touch.v2</string>
-          </array>
+        <config-file target="*-Info.plist" parent="BraintreeUniversalLink">
+            <string>https://$BRAINTREE_RETURN_HOST$BRAINTREE_RETURN_PATH</string>
         </config-file>
 
-        <config-file target="*-Info.plist" parent="CFBundleURLTypes">
+        <!-- the PayPal and Venmo apps, so the SDK can app-switch to them when installed -->
+        <config-file target="*-Info.plist" parent="LSApplicationQueriesSchemes">
             <array>
-                <dict>
-                <key>CFBundleTypeRole</key>
-                <string>Editor</string>
-                <key>CFBundleURLSchemes</key>
-                <array>
-                    <string>${PRODUCT_BUNDLE_IDENTIFIER}braintree.payments</string>
-                </array>
-                </dict>
+                <string>paypal</string>
+                <string>com.venmo.touch.v2</string>
             </array>
         </config-file>
 
-        <header-file src="src/ios/BraintreePlugin.h" />
-        <source-file src="src/ios/BraintreePlugin.m" />
+        <source-file src="src/ios/BraintreePlugin.swift" />
 
         <podspec>
-			<config>
-				<source url="https://cdn.cocoapods.org/"/>
-			</config>
-			<pods use-frameworks="true">
-				<pod name="Braintree" spec="~> 5.24" />
-				<pod name="Braintree/ThreeDSecure" />
-				<pod name="Braintree/DataCollector" />
-				<pod name="Braintree/Venmo" />
-				<pod name="BraintreeDropIn" />
-			</pods>
-		</podspec>
-
-        <!-- <framework src="lib/ios/Braintree3DSecure.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeAmericanExpress.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeApplePay.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeCard.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeCore.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeDataCollector.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeDropIn.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreePaymentFlow.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreePayPal.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeUI.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeUIKit.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeUnionPay.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/BraintreeVenmo.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/CardinalMobile.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/PayPalDataCollector.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/PayPalOneTouch.framework" custom="true" embed="true" weak="false" />
-        <framework src="lib/ios/PayPalUtils.framework" custom="true" embed="true" weak="false" /> -->
+            <config>
+                <source url="https://cdn.cocoapods.org/" />
+            </config>
+            <pods use-frameworks="true">
+                <pod name="Braintree/Core" spec="~> 7.13" />
+                <pod name="Braintree/PayPal" spec="~> 7.13" />
+                <pod name="Braintree/Venmo" spec="~> 7.13" />
+                <pod name="Braintree/DataCollector" spec="~> 7.13" />
+            </pods>
+        </podspec>
 
     </platform>
 

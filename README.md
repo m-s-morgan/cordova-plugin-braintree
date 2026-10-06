@@ -1,120 +1,52 @@
-# NOTE
-This repo is a fork of https://github.com/taracque/cordova-plugin-braintree. All active development should point to there - this repo exists only so that I can keep pushing this plugin forward while Taracque maintains the stable branch.
+# cordova-plugin-braintree (v7 branch)
 
-For support please refer to that repo, not to this one. I cannot guarantee I will answer. Feel free to submit PR's, however, and I will do my best to get them both into this code and back into Taracque's fork.
+PayPal and Venmo through the Braintree native SDKs: [braintree_ios](https://github.com/braintree/braintree_ios) v7 and [braintree_android](https://github.com/braintree/braintree_android) v5. A client token goes in, a payment method nonce comes out, and the server does the rest.
 
-# Braintree Cordova Plugin
+This branch replaces the Drop-in based plugin (the `pods` branch). Braintree retired every Drop-in SDK on 2026-09-01 and the current native SDKs have none, so the plugin now renders nothing of its own: the app shows its own PayPal / Venmo buttons and calls one method per flow.
 
-This is a [Cordova](http://cordova.apache.org/) plugin for the [Braintree](https://www.braintreepayments.com/) mobile payment processing SDK.
+Platforms: iOS 15+ (cordova-ios 8+, Swift), Android API 23+ (cordova-android 12+).
 
-This version of the plugin uses versions `4.14.0` (iOS) and `2.12.0` (Android) of the Braintree mobile SDK. Documentation for the Braintree SDK can be found [here](https://developers.braintreepayments.com/start/overview). Before start using this plugin please read that documentation.
-
-**This plugin is still in development.**
-
-# Install
-
-Please ensure you are on a reasonably recent version of Node. The install script uses ES6 features that require at least node 7.
-
-Be sure, that plist and xcode npm module is installed:
-```bash
-    npm install plist
-    npm install xcode
-```
-
-To add the plugin to your Cordova project, first remove the iOS platform, install the latest version of the plugin directly from git, and then re-add iOS platform
+## Install
 
 ```bash
-    cordova platform remove ios
-    cordova plugin add https://github.com/fbognini/cordova-plugin-braintree
-    cordova platform add ios
+cordova plugin add https://github.com/m-s-morgan/cordova-plugin-braintree#v7 \
+  --variable BRAINTREE_RETURN_HOST=pr.fit \
+  --variable BRAINTREE_RETURN_PATH=/braintree-payments
 ```
 
-# Usage
+The two variables form the universal link / App Link `https://<host><path>` the Venmo app (and the PayPal app, when app switch is enabled) returns to:
 
-The plugin is available via a global variable named `BraintreePlugin`. It exposes the following properties and functions.
+- iOS: the host must serve an `apple-app-site-association` whose paths include `<path>/*`, and the app must have the `applinks:<host>` associated domain.
+- Android: `https://<host>/.well-known/assetlinks.json` must list the app's signing certificate; the plugin adds the `autoVerify` intent filter. It also registers the `<applicationId>.braintree` scheme the SDK falls back to.
 
-All functions accept optional success and failure callbacks as their last two arguments, where the failure callback will receive an error string as an argument unless otherwise noted.
+Both apps' bundle ids are queried (`paypal`, `com.venmo.touch.v2` on iOS; `com.venmo` on Android) so the SDKs can app-switch when installed. Without the app, PayPal opens a secure web sign-in and Venmo a web login.
 
-A TypeScript definition file for the JavaScript interface is available in the `typings` directory as well as on [DefinitelyTyped](https://github.com/borisyankov/DefinitelyTyped) via the `tsd` tool.
+## Usage
 
-## Initialize Braintree Client ##
+```js
+BraintreePlugin.initialize({ token: clientToken, dark: true }, onReady, onError);
 
-Used to initialize the Braintree client. The client must be initialized before other methods can be used.
+BraintreePlugin.payPal({ flow: 'vault', description: 'ProFit', email: 'payer@example.com' }, function (result) {
+    if (result.userCancelled) { return; }
+    // result.nonce, result.deviceData, result.email ...
+}, onError);
 
-Method Signature:
+BraintreePlugin.venmo({ usage: 'multi_use', amount: '12.34', displayName: 'ProFit' }, function (result) {
+    if (result.userCancelled) { return; }
+    // result.nonce, result.deviceData, result.username ...
+}, onError);
 
-`initialize(token, successCallback, failureCallback)`
-
-Parameters:
-
-* `token` (string): The unique client token or static tokenization key to use.
-
-Example Usage:
-
-```
-var token = "YOUR_TOKEN";
-
-BraintreePlugin.initialize(token,
-    function () {
-        console.log("init OK!");
-        ...
-    },
-    function (error) { console.error(error); });
-```
-*As the initialize code is async, be sure you called all Braintree related codes after successCallback is called!*
-
-## Show Drop-In Payment UI ##
-
-Used to show Braintree's drop-in UI for accepting payments.
-
-Method Signature:
-
-`presentDropInPaymentUI(options, successCallback, failureCallback)`
-
-Parameters:
-
-* `options` (object): An optional argument used to configure the payment UI; see type definition for parameters.
-
-Example Usage:
-
-```
-var options = {
-    amount: "49.99",
-    primaryDescription: "Your Item"
-};
-
-BraintreePlugin.presentDropInPaymentUI(options, function (result) {
-
-    if (result.userCancelled) {
-        console.debug("User cancelled payment dialog.");
-    }
-    else {
-        console.info("User completed payment dialog.");
-        console.info("Payment Nonce: " + result.nonce);
-        console.debug("Payment Result.", result);
-    }
-});
+BraintreePlugin.isVenmoAvailable(function (available) { ... });
+BraintreePlugin.collectDeviceData(function (deviceData) { ... });
 ```
 
-## Apple Pay (iOS only) ##
+`flow: 'vault'` (the default) approves a billing agreement the server can charge now and later; `flow: 'checkout'` approves a single payment of `amount`. `usage: 'multi_use'` (the default) lets the server keep the Venmo account for later charges.
 
-Do not turn on Apple Pay in Braintree if you don't have Apple Pay entitlements.
-To allow ApplePay payment you need to initialize Apple Pay framework before usign the Drop/In Payment UI. Read Braintree docs to setup Merchant account: https://developers.braintreepayments.com/guides/apple-pay/configuration/ios/v4#apple-pay-certificate-request-and-provisioning
+Send `nonce` (and `deviceData`) to the server for `transaction.sale` or `paymentMethod.create`.
 
-Method Signature:
-`setupApplePay(options)`
+## Return handling
 
-Paramteres:
+- iOS (cordova-ios 8 scene lifecycle): the plugin observes `CDVPluginContinueUserActivityNotification` and the standard `handleOpenURL` hook and hands URLs to `BTAppContextSwitcher`, which only consumes the ones the SDK recognises. No `AppDelegate` category is installed, so other universal-link plugins keep working.
+- Android: the pending request is stored in `SharedPreferences` and finished from `onNewIntent` / `onResume`, as the v5 SDK requires.
 
-* `options` (object): Merchant settings object, with the following keys:
-    *   `merchantId` (string): The merchant id generated on Apple Developer portal.
-    *   `currency` (string): The currency for payment, 3 letter code (ISO 4217)
-    *   `country` (string): The country code of merchant's residence. (ISO 3166-2)
-
-Example Usage:
-
-```
-BraintreePlugin.setupApplePay({ merchantId : 'com.braintree.merchant.sandbox.demo-app', country : 'US', currency : 'USD'});
-```
-
-ApplePay shown in Drop-In UI only if `BraintreePlugin.setupApplePay` called before `BraintreePlugin.presentDropInPaymentUI`
+TypeScript definitions are in `typings/`.

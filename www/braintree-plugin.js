@@ -8,18 +8,35 @@ var exec = require('cordova/exec');
 var PLUGIN_ID = 'BraintreePlugin';
 
 /**
- * The plugin which will be exported and exposed in the global scope.
+ * PayPal and Venmo through the Braintree native SDKs. Every function takes optional success and
+ * failure callbacks as its last two arguments; the failure callback receives an error string.
+ *
+ * A flow result is `{ userCancelled: true }` when the payer backed out, otherwise
+ * `{ nonce, type, deviceData, ... }` with the account details listed in the typings.
  */
 var BraintreePlugin = {};
 
+function fail(failureCallback, message) {
+    if (typeof failureCallback === 'function') {
+        failureCallback(message);
+    }
+}
+
+function money(amount) {
+    if (amount === undefined || amount === null || amount === '') {
+        return null;
+    }
+
+    var n = Number(amount);
+
+    return isNaN(n) ? String(amount) : n.toFixed(2);
+}
+
 /**
- * Used to initialize the Braintree client.
+ * Initializes the native clients with a client token (or tokenization key). Must be called before
+ * any other function, and again with a fresh token whenever the server hands one out.
  *
- * The client must be initialized before other methods can be used.
- *
- * @param { token: string; dark?: boolean; } options - ProFit MOD options containing client token or tokenization key to use with the Braintree client.
- * @param [function] successCallback - The success callback for this asynchronous function.
- * @param [function] failureCallback - The failure callback for this asynchronous function; receives an error string.
+ * @param {{ token: string; dark?: boolean; }} options
  */
 BraintreePlugin.initialize = function initialize(options, successCallback, failureCallback) {
     if (!options) {
@@ -28,88 +45,80 @@ BraintreePlugin.initialize = function initialize(options, successCallback, failu
 
     var token = options.token;
 
-    if (!token || typeof (token) !== 'string') {
-        failureCallback('A non-null, non-empty string must be provided for the token parameter.');
+    if (!token || typeof token !== 'string') {
+        fail(failureCallback, 'A non-null, non-empty string must be provided for the token parameter.');
         return;
     }
 
-    var args = [token];
+    exec(successCallback, failureCallback, PLUGIN_ID, 'initialize', [token, options.dark === true]);
+};
 
-    if (options.dark === true) {
-        args.push(true);
+/**
+ * Starts the PayPal flow (the PayPal app when installed, otherwise a secure web sign-in).
+ *
+ * @param {{ flow?: 'vault'|'checkout'; amount?: string|number; currency?: string; description?: string; email?: string; offerCredit?: boolean; }} options
+ *   `vault` (the default) approves a billing agreement the server can charge later; `checkout`
+ *   approves one payment of `amount`.
+ */
+BraintreePlugin.payPal = function payPal(options, successCallback, failureCallback) {
+    if (!options) {
+        options = {};
     }
 
-    exec(successCallback, failureCallback, PLUGIN_ID, 'initialize', args);
+    var flow = options.flow === 'checkout' ? 'checkout' : 'vault',
+        amount = money(options.amount);
+
+    if (flow === 'checkout' && !amount) {
+        fail(failureCallback, 'An amount is required for a checkout payment.');
+        return;
+    }
+
+    exec(successCallback, failureCallback, PLUGIN_ID, 'payPal', [
+        flow,
+        amount,
+        options.currency || 'USD',
+        options.description || null,
+        options.email || null,
+        options.offerCredit === true
+    ]);
 };
 
 /**
- * Used to configure Apple Pay on iOS.
+ * Starts the Venmo flow (the Venmo app when installed, otherwise a web sign-in).
  *
- * @param {object} options - The options used to configure Apple Pay.
- * @param [function] successCallback - The success callback for this asynchronous function.
- * @param [function] failureCallback - The failure callback for this asynchronous function; receives an error string.
+ * @param {{ usage?: 'multi_use'|'single_use'; amount?: string|number; displayName?: string; }} options
+ *   `multi_use` (the default) lets the server keep the account for later charges.
  */
-BraintreePlugin.setupApplePay = function setupApplePay(options, successCallback, failureCallback) {
-  if (!options) {
-    options = {};
-  }
+BraintreePlugin.venmo = function venmo(options, successCallback, failureCallback) {
+    if (!options) {
+        options = {};
+    }
 
-  if (typeof (options.merchantId) !== 'string') {
-    failureCallback('Apple Pay Merchant ID must be provided');
-  }
-  if (typeof (options.currency) !== 'string') {
-    failureCallback('Apple Pay currency must be provided');
-  }
-  if (typeof (options.country) !== 'string') {
-    failureCallback('Apple Pay country must be provided');
-  }
-
-  var pluginOptions = [
-    options.merchantId,
-    options.currency,
-    options.country,
-  ];
-
-  exec(successCallback, failureCallback, PLUGIN_ID, 'setupApplePay', pluginOptions);
+    exec(successCallback, failureCallback, PLUGIN_ID, 'venmo', [
+        options.usage === 'single_use' ? 'single_use' : 'multi_use',
+        money(options.amount),
+        options.displayName || null
+    ]);
 };
 
 /**
- * Shows Braintree's drop-in payment UI.
- *
- * @param {object} options - The options used to control the drop-in payment UI.
- * @param [function] successCallback - The success callback for this asynchronous function; receives a result object.
- * @param [function] failureCallback - The failure callback for this asynchronous function; receives an error string.
+ * Whether Venmo can be offered on this device (the SDK falls back to a web sign-in without the
+ * app, so this is about the platform's support, not the app being installed).
  */
-BraintreePlugin.presentDropInPaymentUI = function showDropInUI(options, successCallback, failureCallback) {
-
-  if (!options) {
-    options = {};
-  }
-
-  if (typeof (options.amount) === 'undefined') {
-    options.amount = '0.00';
-  }
-  if (!isNaN(options.amount * 1)) {
-    options.amount = (options.amount * 1).toFixed(2);
-  }
-
-  var pluginOptions = [
-    options.amount,
-    options.primaryDescription,
-    options.threeDSecure,
-    options.googlePay,
-  ];
-
-  exec(successCallback, failureCallback, PLUGIN_ID, 'presentDropInPaymentUI', pluginOptions);
+BraintreePlugin.isVenmoAvailable = function isVenmoAvailable(successCallback, failureCallback) {
+    exec(function (result) {
+        if (typeof successCallback === 'function') {
+            successCallback(result === true || result === 1 || result === 'true');
+        }
+    }, failureCallback, PLUGIN_ID, 'isVenmoAvailable', []);
 };
 
-BraintreePlugin.paypalProcess = function paypalProcess(amount, currency, env, successCallback, failureCallback) {
-  exec(successCallback, failureCallback, PLUGIN_ID, 'paypalProcess', [amount, currency, env]);
+/**
+ * The device data Braintree's fraud tools read alongside a nonce (also carried on every flow
+ * result as `deviceData`).
+ */
+BraintreePlugin.collectDeviceData = function collectDeviceData(successCallback, failureCallback) {
+    exec(successCallback, failureCallback, PLUGIN_ID, 'collectDeviceData', []);
 };
-
-BraintreePlugin.paypalProcessVaulted = function paypalProcessVaulted(env, successCallback, failureCallback) {
-  exec(successCallback, failureCallback, PLUGIN_ID, 'paypalProcessVaulted', [env]);
-};
-
 
 module.exports = BraintreePlugin;

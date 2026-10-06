@@ -1,31 +1,7 @@
-def packageName = getPackageName()
-
-android {
-    defaultConfig {
-        applicationId packageName
-    }
-}
-
-repositories {
-    maven {
-        url "https://cardinalcommerceprod.jfrog.io/artifactory/android"
-        credentials {
-            username 'braintree_team_sdk'
-            password 'AKCp8jQcoDy2hxSWhDAUQKXLDPDx6NYRkqrgFLRc3qDrayg6rrCbJpsKKyMwaykVL8FWusJpp'
-        }
-    }
-}
-
+// Braintree Android SDK v5: only the modules PayPal and Venmo need (no drop-in, no 3DS, so no
+// Cardinal repository).
 dependencies {
-    implementation 'com.braintreepayments.api:drop-in:6.14.0'
-}
-
-def getPackageName() {
-    def configFile = file("res/xml/config.xml")
-    if (!configFile.exists()) {
-      configFile = file("src/main/res/xml/config.xml")
-    }
-    def config = configFile.getText()
-    def xml = new XmlParser(false, false).parseText(config)
-    return xml.attribute("id")
+    implementation 'com.braintreepayments.api:paypal:5.33.0'
+    implementation 'com.braintreepayments.api:venmo:5.33.0'
+    implementation 'com.braintreepayments.api:data-collector:5.33.0'
 }
