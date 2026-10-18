@@ -36,6 +36,7 @@ BraintreePlugin.venmo({ usage: 'multi_use', amount: '12.34', displayName: 'ProFi
     // result.nonce, result.deviceData, result.username ...
 }, onError);
 
+BraintreePlugin.cancel();   // the page is done with the flow in progress (its modal closed)
 BraintreePlugin.isVenmoAvailable(function (available) { ... });
 BraintreePlugin.collectDeviceData(function (deviceData) { ... });
 ```
@@ -43,6 +44,15 @@ BraintreePlugin.collectDeviceData(function (deviceData) { ... });
 `flow: 'vault'` (the default) approves a billing agreement the server can charge now and later; `flow: 'checkout'` approves a single payment of `amount`. `usage: 'multi_use'` (the default) lets the server keep the Venmo account for later charges.
 
 Send `nonce` (and `deviceData`) to the server for `transaction.sale` or `paymentMethod.create`.
+
+One flow runs at a time, and none gets stuck. The SDKs only finish a flow from its return (a
+universal link / App Link, or the web session closing): a payer who leaves the Venmo app some other
+way never produces one. When the app comes back from the background without a return (after a short
+grace for the link), or nothing happens for a minute, the flow's callback receives
+`{ userCancelled: true, idle: true }` and is kept: offer the buttons again, and a result the payer
+finishes after all still arrives on it. Starting another flow, `initialize`, or `cancel` ends the
+flow in progress for good (`{ userCancelled: true }`, callback released); the SDK's late word on an
+ended flow is dropped.
 
 ## Return handling
 

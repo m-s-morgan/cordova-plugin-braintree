@@ -12,7 +12,12 @@ var PLUGIN_ID = 'BraintreePlugin';
  * failure callbacks as its last two arguments; the failure callback receives an error string.
  *
  * A flow result is `{ userCancelled: true }` when the payer backed out, otherwise
- * `{ nonce, type, deviceData, ... }` with the account details listed in the typings.
+ * `{ nonce, type, deviceData, ... }` with the account details listed in the typings. A flow the
+ * plugin can no longer see finishing (the payer came back to the app without a word from the
+ * Venmo app or the browser, or nothing happened for a minute) reports `{ userCancelled: true,
+ * idle: true }` and keeps its callback: the page can offer its buttons again, and a result the
+ * payer finishes after all still arrives on that callback — unless the page started another flow,
+ * re-initialized or called `cancel`, which end it for good.
  */
 var BraintreePlugin = {};
 
@@ -99,6 +104,15 @@ BraintreePlugin.venmo = function venmo(options, successCallback, failureCallback
         money(options.amount),
         options.displayName || null
     ]);
+};
+
+/**
+ * Ends the flow in progress, if any: its callback receives `{ userCancelled: true }` and is
+ * released. For the page that is done with it (its modal closed, its payment state left), so the
+ * next flow starts clean. Starting another flow, or initializing again, ends it the same way.
+ */
+BraintreePlugin.cancel = function cancel(successCallback, failureCallback) {
+    exec(successCallback, failureCallback, PLUGIN_ID, 'cancel', []);
 };
 
 /**

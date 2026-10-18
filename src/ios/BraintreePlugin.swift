@@ -10,6 +10,20 @@
 //  URL scheme return arrives through the standard handleOpenURL hook. Only URLs the SDK recognises
 //  are consumed, so other plugins (universal links) keep theirs.
 //
+//  One flow at a time, and never a stuck one. The SDK only finishes a Venmo flow from a return URL:
+//  a payer who leaves the Venmo app some other way (home, the app switcher, closing Venmo) never
+//  produces one, and the SDK's completion never fires; a PayPal web session that fails to start
+//  never completes either. So the flow in progress is tracked here (`pending`) and watched:
+//
+//   - a Venmo flow whose app came back from the background without a return URL (after a short
+//     grace for the link to arrive), or any flow with no word for a minute, is reported IDLE to
+//     the page: `{ userCancelled: true, idle: true }`, with the callback kept. The page shows its
+//     buttons again, but the flow stays claimable — a payer who only peeked back at the app and
+//     then approved in Venmo still gets that approval delivered, on the same callback.
+//   - a flow ends for good (`{ userCancelled: true }`, callback released) when the page starts
+//     another, re-initializes, or says it is done (`cancel`); an SDK result for a flow that ended
+//     is dropped (`generation`).
+//
 
 import Foundation
 import UIKit
@@ -18,12 +32,37 @@ import Braintree
 @objc(BraintreePlugin)
 class BraintreePlugin: CDVPlugin {
 
+    private static let kindPayPal = "paypal"
+    private static let kindVenmo = "venmo"
+
+    // how long a return URL gets to arrive after the app came back from the background before an
+    // out-of-app (Venmo) flow is reported idle
+    private static let returnGrace: TimeInterval = 2.5
+    // how long any flow gets without a word (the SDK's own network timeouts are 30 s a call), and
+    // how long one gets to finish after its return URL arrived, before it is reported idle
+    private static let backstop: TimeInterval = 60
+    private static let returnBackstop: TimeInterval = 70
+
     private var authorization: String?
     private var payPalClient: BTPayPalClient?
     private var venmoClient: BTVenmoClient?
     private var dataCollector: BTDataCollector?
     private var deviceData: String = ""
-    private var busy = false
+
+    // the flow in progress: its command (to answer), which flow it is, and whether the page was
+    // already told it looks idle
+    private var pending: (command: CDVInvokedUrlCommand, kind: String, idled: Bool)?
+    // bumped whenever a flow starts or ends: an SDK completion for an older generation is for a
+    // flow already answered
+    private var generation = 0
+    // a return URL the SDK accepted since the pending flow started
+    private var returnURLSeen = false
+    // the app went to the background since the pending flow started (an app switch, not a
+    // Control Center pull or a call banner, which only resign active)
+    private var leftApp = false
+    // a watch fired while the app was not in front (nothing is idle while the payer is away):
+    // re-armed, short, when it comes back
+    private var watchMissed = false
 
     // MARK: - Lifecycle
 
@@ -34,6 +73,20 @@ class BraintreePlugin: CDVPlugin {
             self,
             selector: #selector(onContinueUserActivity(_:)),
             name: NSNotification.Name("CDVPluginContinueUserActivityNotification"),
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onDidEnterBackground(_:)),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onDidBecomeActive(_:)),
+            name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
     }
@@ -48,7 +101,7 @@ class BraintreePlugin: CDVPlugin {
             return
         }
 
-        BTAppContextSwitcher.sharedInstance.handleOpen(url)
+        handleReturn(url)
     }
 
     // a universal-link return (scene:continueUserActivity:)
@@ -59,7 +112,80 @@ class BraintreePlugin: CDVPlugin {
             return
         }
 
-        BTAppContextSwitcher.sharedInstance.handleOpen(url)
+        handleReturn(url)
+    }
+
+    private func handleReturn(_ url: URL) {
+        guard BTAppContextSwitcher.sharedInstance.handleOpen(url) else {
+            return
+        }
+
+        returnURLSeen = true
+
+        // the SDK accepted the URL, but may still have nothing to finish with it (a flow it no
+        // longer holds), and finishing takes network calls: watched again, longer
+        if pending != nil {
+            watch(after: BraintreePlugin.returnBackstop)
+        }
+    }
+
+    @objc func onDidEnterBackground(_ notification: Notification) {
+        if pending != nil {
+            leftApp = true
+        }
+    }
+
+    // back from the background: a Venmo flow left for the Venmo app (or Safari), and comes back
+    // through a return URL — or not at all, when the payer just switched back. The URL arrives
+    // around the same activation, so after a short grace without one the flow is reported idle.
+    // (A PayPal flow runs in an in-app web session: its consent alert and its PayPal-app hops
+    // activate the app with the sheet still up, so it is only ever watched by the backstop.)
+    @objc func onDidBecomeActive(_ notification: Notification) {
+        guard let pending = pending, !pending.idled else {
+            return
+        }
+
+        if watchMissed {
+            watchMissed = false
+            watch(after: BraintreePlugin.returnGrace)
+            return
+        }
+
+        guard pending.kind == BraintreePlugin.kindVenmo, leftApp, !returnURLSeen else {
+            return
+        }
+
+        watch(after: BraintreePlugin.returnGrace)
+    }
+
+    // reports the flow idle when, by then, it is still the same flow, no return URL arrived since
+    // and the app is in front (a payer back in Venmo within the grace is not idle)
+    private func watch(after delay: TimeInterval) {
+        let generation = self.generation
+        let returned = returnURLSeen
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self, generation == self.generation, let pending = self.pending, !pending.idled else {
+                return
+            }
+
+            if !returned && self.returnURLSeen {
+                // the return arrived meanwhile: its own, longer watch is on
+                return
+            }
+
+            if UIApplication.shared.applicationState != .active {
+                self.watchMissed = true
+                return
+            }
+
+            self.pending = (command: pending.command, kind: pending.kind, idled: true)
+
+            let result = CDVPluginResult(status: .ok, messageAs: ["userCancelled": true, "idle": true])
+
+            result.setKeepCallbackAs(true)
+            self.commandDelegate.send(result, callbackId: pending.command.callbackId)
+        }
     }
 
     // MARK: - Commands
@@ -76,7 +202,11 @@ class BraintreePlugin: CDVPlugin {
             return
         }
 
+        // new clients: whatever the old ones had in flight is over
+        settleCancelled()
+
         authorization = token
+        // (the PayPal client is made per flow: see payPal)
         payPalClient = BTPayPalClient(authorization: token)
         venmoClient = BTVenmoClient(authorization: token, universalLink: universalLink)
         dataCollector = BTDataCollector(authorization: token)
@@ -91,15 +221,17 @@ class BraintreePlugin: CDVPlugin {
 
     @objc(payPal:)
     func payPal(_ command: CDVInvokedUrlCommand) {
-        guard let client = payPalClient else {
+        guard payPalClient != nil, let authorization = authorization else {
             send(error: "The Braintree client must first be initialized via BraintreePlugin.initialize(options)", for: command)
             return
         }
 
-        guard !busy else {
-            send(error: "A payment flow is already in progress.", for: command)
-            return
-        }
+        // a fresh client every time: a web session that failed to start (the app not in front
+        // when the sheet was due) stays "current" in its client for good, and every later
+        // tokenize on that client is refused as a duplicate without a word
+        let client = BTPayPalClient(authorization: authorization)
+
+        payPalClient = client
 
         let args = command.arguments ?? []
         let flow = string(args, 0) ?? "vault"
@@ -109,28 +241,26 @@ class BraintreePlugin: CDVPlugin {
         let email = string(args, 4)
         let offerCredit = bool(args, 5)
 
-        busy = true
+        let generation = begin(BraintreePlugin.kindPayPal, command)
 
         let completion: (BTPayPalAccountNonce?, Error?) -> Void = { [weak self] nonce, error in
-            guard let self = self else {
+            guard let self = self, let command = self.current(generation) else {
                 return
             }
-
-            self.busy = false
 
             if let error = error {
                 let ns = error as NSError
 
                 if ns.domain == BTPayPalError.errorDomain && ns.code == BTPayPalError.canceled.errorCode {
-                    self.send(ok: ["userCancelled": true], for: command)
+                    self.settleCancelled()
                 } else {
-                    self.send(error: error.localizedDescription, for: command)
+                    self.settle(error: error.localizedDescription, for: command)
                 }
                 return
             }
 
             guard let nonce = nonce else {
-                self.send(error: "No PayPal account was returned.", for: command)
+                self.settle(error: "No PayPal account was returned.", for: command)
                 return
             }
 
@@ -148,7 +278,7 @@ class BraintreePlugin: CDVPlugin {
             result["payerId"] = nonce.payerID
             result["clientMetadataId"] = nonce.clientMetadataID
 
-            self.send(ok: result, for: command)
+            self.settle(ok: result, for: command)
         }
 
         if flow == "checkout", let amount = amount {
@@ -183,11 +313,6 @@ class BraintreePlugin: CDVPlugin {
             return
         }
 
-        guard !busy else {
-            send(error: "A payment flow is already in progress.", for: command)
-            return
-        }
-
         let args = command.arguments ?? []
         let usage: BTVenmoPaymentMethodUsage = (string(args, 0) ?? "multi_use") == "single_use" ? .singleUse : .multiUse
         let amount = string(args, 1)
@@ -201,28 +326,26 @@ class BraintreePlugin: CDVPlugin {
             totalAmount: amount
         )
 
-        busy = true
+        let generation = begin(BraintreePlugin.kindVenmo, command)
 
         client.tokenize(request) { [weak self] nonce, error in
-            guard let self = self else {
+            guard let self = self, let command = self.current(generation) else {
                 return
             }
-
-            self.busy = false
 
             if let error = error {
                 let ns = error as NSError
 
                 if ns.domain == BTVenmoError.errorDomain && ns.code == BTVenmoError.canceled.errorCode {
-                    self.send(ok: ["userCancelled": true], for: command)
+                    self.settleCancelled()
                 } else {
-                    self.send(error: error.localizedDescription, for: command)
+                    self.settle(error: error.localizedDescription, for: command)
                 }
                 return
             }
 
             guard let nonce = nonce else {
-                self.send(error: "No Venmo account was returned.", for: command)
+                self.settle(error: "No Venmo account was returned.", for: command)
                 return
             }
 
@@ -240,8 +363,16 @@ class BraintreePlugin: CDVPlugin {
             result["phoneNumber"] = nonce.phoneNumber
             result["externalId"] = nonce.externalID
 
-            self.send(ok: result, for: command)
+            self.settle(ok: result, for: command)
         }
+    }
+
+    // the page is done with the flow in progress (its modal closed, its state left): answered as
+    // cancelled so the next one starts clean. Nothing in progress is fine.
+    @objc(cancel:)
+    func cancel(_ command: CDVInvokedUrlCommand) {
+        settleCancelled()
+        send(ok: nil, for: command)
     }
 
     // Venmo is always offerable on iOS 15+: the SDK opens the Venmo app when installed and a web
@@ -274,6 +405,60 @@ class BraintreePlugin: CDVPlugin {
             self?.deviceData = data ?? ""
             self?.send(ok: data ?? "", for: command)
         }
+    }
+
+    // MARK: - The flow in progress
+
+    // starts a flow: one already in progress is over (answered as cancelled) — the page could not
+    // tap a button while it ran unless its result never came, and the new tap is what the payer
+    // wants now
+    private func begin(_ kind: String, _ command: CDVInvokedUrlCommand) -> Int {
+        settleCancelled()
+
+        generation += 1
+        pending = (command: command, kind: kind, idled: false)
+        returnURLSeen = false
+        leftApp = false
+        watchMissed = false
+        watch(after: BraintreePlugin.backstop)
+
+        return generation
+    }
+
+    // the pending command, when the completion calling belongs to the flow still in progress
+    private func current(_ generation: Int) -> CDVInvokedUrlCommand? {
+        guard generation == self.generation, let pending = pending else {
+            return nil
+        }
+
+        return pending.command
+    }
+
+    private func settleCancelled() {
+        guard let pending = pending else {
+            return
+        }
+
+        end()
+        send(ok: ["userCancelled": true], for: pending.command)
+    }
+
+    private func settle(ok result: [String: Any], for command: CDVInvokedUrlCommand) {
+        end()
+        send(ok: result, for: command)
+    }
+
+    private func settle(error message: String, for command: CDVInvokedUrlCommand) {
+        end()
+        send(error: message, for: command)
+    }
+
+    private func end() {
+        pending = nil
+        generation += 1
+        returnURLSeen = false
+        leftApp = false
+        watchMissed = false
     }
 
     // MARK: - Helpers

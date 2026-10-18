@@ -24,6 +24,13 @@ declare module BraintreePlugin {
         venmo(options?: VenmoOptions, successCallback?: (result: VenmoResult) => void, failureCallback?: (error: string) => void): void;
 
         /**
+         * Ends the flow in progress, if any (its callback receives `{ userCancelled: true }` and
+         * is released), so the next one starts clean. Starting another flow, or initializing
+         * again, ends it the same way.
+         */
+        cancel(successCallback?: () => void, failureCallback?: (error: string) => void): void;
+
+        /**
          * Whether Venmo can be offered on this device.
          */
         isVenmoAvailable(successCallback?: (available: boolean) => void, failureCallback?: (error: string) => void): void;
@@ -66,6 +73,13 @@ declare module BraintreePlugin {
 
     interface FlowResult {
         userCancelled?: boolean;
+        /**
+         * With `userCancelled`: the plugin can no longer see the flow finishing (the payer came
+         * back to the app without a word from the Venmo app or the browser, or nothing happened
+         * for a minute). The callback is kept: a result the payer finishes after all still
+         * arrives on it, unless another flow, `initialize` or `cancel` ended it.
+         */
+        idle?: boolean;
         /** The payment method nonce for the server. */
         nonce?: string;
         /** `PayPalAccount` or `VenmoAccount`. */

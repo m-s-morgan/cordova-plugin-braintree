@@ -4,6 +4,14 @@
  * launch the browser / app switch, and finish it when the activity comes back (onNewIntent for the
  * app's singleInstance launch mode, onResume otherwise) — so the pending request is kept in
  * SharedPreferences across the switch, as the SDK asks.
+ *
+ * One flow at a time, and never a stuck one. The activity resuming with no result for the flow in
+ * progress means the payer came back without finishing it (the SDK's own reading of NoResult), and
+ * the page is told the flow looks IDLE — `{ userCancelled: true, idle: true }`, callback kept — so
+ * its buttons come back, while the flow stays claimable: a payer who only peeked back and then
+ * finished in the browser / Venmo still gets that result, on the same callback. A flow ends for
+ * good (`{ userCancelled: true }`, callback released) when the page starts another, re-initializes,
+ * or says it is done (`cancel`); the SDK's late word on a flow that ended is dropped (`generation`).
  */
 
 package net.justincredible;
@@ -12,6 +20,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import androidx.activity.ComponentActivity;
@@ -58,6 +68,8 @@ public final class BraintreePlugin extends CordovaPlugin {
     private static final String PENDING_PAYPAL = "pendingPayPal";
     private static final String PENDING_VENMO = "pendingVenmo";
     private static final String USER_CANCELLED = "userCancelled";
+    // how long a flow gets without a word before the page is told it looks idle
+    private static final long BACKSTOP_MS = 60000;
 
     private PayPalLauncher payPalLauncher;
     private VenmoLauncher venmoLauncher;
@@ -67,9 +79,19 @@ public final class BraintreePlugin extends CordovaPlugin {
     private String authorization;
     private String deviceData = "";
 
-    // the callback of the flow in progress, and which flow it is
+    // the callback of the flow in progress, which flow it is, and whether the page was already
+    // told it looks idle
     private CallbackContext flowCallback;
     private String flowKind;
+    private boolean flowIdled;
+    // the intent onNewIntent delivered and did not finish a flow with, for the resume that follows
+    // (the activity's own getIntent() is the launch intent for the whole process — a return link
+    // that cold-started the app would look like a result for every later flow)
+    private Intent newIntent;
+    // bumped whenever a flow starts or ends: the SDK's callbacks for an older generation belong to
+    // a flow already answered, and must not launch or answer in the new one's name
+    private int generation = 0;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void pluginInitialize() {
@@ -78,61 +100,85 @@ public final class BraintreePlugin extends CordovaPlugin {
         venmoLauncher = new VenmoLauncher((ActivityResultCaller) null);
     }
 
+    // every command runs on the main thread, where the SDK's callbacks and the activity's
+    // lifecycle hooks run too, so the flow bookkeeping is never raced from the bridge thread
     @Override
-    public boolean execute(String action, final JSONArray args, final CallbackContext callbackContext) throws JSONException {
+    public boolean execute(String action, final JSONArray args, final CallbackContext callbackContext) {
         if (action == null) {
             return false;
         }
 
-        try {
-            switch (action) {
-                case "initialize":
-                    initialize(args, callbackContext);
-                    return true;
-                case "payPal":
-                    payPal(args, callbackContext);
-                    return true;
-                case "venmo":
-                    venmo(args, callbackContext);
-                    return true;
-                case "isVenmoAvailable":
-                    callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, venmoClient != null));
-                    return true;
-                case "collectDeviceData":
-                    collectDeviceData(callbackContext);
-                    return true;
-                default:
-                    return false;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "execute " + action + " failed", e);
-            callbackContext.error("BraintreePlugin uncaught exception: " + e.getMessage());
-            return true;
+        switch (action) {
+            case "initialize":
+            case "payPal":
+            case "venmo":
+            case "cancel":
+            case "isVenmoAvailable":
+            case "collectDeviceData":
+                break;
+            default:
+                return false;
         }
+
+        handler.post(() -> {
+            try {
+                switch (action) {
+                    case "initialize":
+                        initialize(args, callbackContext);
+                        break;
+                    case "payPal":
+                        payPal(args, callbackContext);
+                        break;
+                    case "venmo":
+                        venmo(args, callbackContext);
+                        break;
+                    case "cancel":
+                        cancelFlow();
+                        callbackContext.success();
+                        break;
+                    case "isVenmoAvailable":
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, venmoClient != null));
+                        break;
+                    case "collectDeviceData":
+                        collectDeviceData(callbackContext);
+                        break;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "execute " + action + " failed", e);
+                callbackContext.error("BraintreePlugin uncaught exception: " + e.getMessage());
+            }
+        });
+
+        return true;
     }
 
     // -- returns from the browser / app switch -------------------------------------------------
 
+    // the return deep link itself (the app's singleInstance launch mode delivers it here, before
+    // onResume): a result ends the flow; nothing for it leaves the flow to onResume
     @Override
     public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        handleReturn(intent);
+        newIntent = handleReturn(intent, false) ? null : intent;
     }
 
+    // back in the foreground: the flow in progress either finished through its return (already
+    // handled, or in the activity's intent now) or was walked away from — the browser closed, the
+    // Venmo app left — which is a cancel
     @Override
     public void onResume(boolean multitasking) {
         super.onResume(multitasking);
 
-        AppCompatActivity activity = cordova.getActivity();
+        Intent intent = newIntent;
 
-        if (activity != null) {
-            handleReturn(activity.getIntent());
-        }
+        newIntent = null;
+        handleReturn(intent == null ? new Intent() : intent, true);
     }
 
-    private void handleReturn(Intent intent) {
+    // whether the intent finished (or failed) the flow in progress
+    private boolean handleReturn(Intent intent, boolean resumed) {
         if (intent == null) {
-            return;
+            return false;
         }
 
         SharedPreferences prefs = prefs();
@@ -144,12 +190,22 @@ public final class BraintreePlugin extends CordovaPlugin {
 
             if (result instanceof PayPalPaymentAuthResult.Success) {
                 prefs.edit().remove(PENDING_PAYPAL).apply();
-                payPalClient.tokenize((PayPalPaymentAuthResult.Success) result, this::onPayPalResult);
+                final int gen = generation;
+
+                payPalClient.tokenize((PayPalPaymentAuthResult.Success) result, (PayPalResult payPalResult) -> {
+                    if (gen == generation) {
+                        onPayPalResult(payPalResult);
+                    }
+                });
+                return true;
             } else if (result instanceof PayPalPaymentAuthResult.Failure) {
                 prefs.edit().remove(PENDING_PAYPAL).apply();
                 failFlow(((PayPalPaymentAuthResult.Failure) result).getError().getMessage());
+                return true;
+            } else if (resumed) {
+                // NoResult on resume: the payer came back without finishing
+                idleFlow();
             }
-            // NoResult: the activity resumed for another reason; the switch is still pending
         }
 
         if (pendingVenmo != null && venmoClient != null) {
@@ -157,12 +213,24 @@ public final class BraintreePlugin extends CordovaPlugin {
 
             if (result instanceof VenmoPaymentAuthResult.Success) {
                 prefs.edit().remove(PENDING_VENMO).apply();
-                venmoClient.tokenize((VenmoPaymentAuthResult.Success) result, this::onVenmoResult);
+                final int gen = generation;
+
+                venmoClient.tokenize((VenmoPaymentAuthResult.Success) result, (VenmoResult venmoResult) -> {
+                    if (gen == generation) {
+                        onVenmoResult(venmoResult);
+                    }
+                });
+                return true;
             } else if (result instanceof VenmoPaymentAuthResult.Failure) {
                 prefs.edit().remove(PENDING_VENMO).apply();
                 failFlow(((VenmoPaymentAuthResult.Failure) result).getError().getMessage());
+                return true;
+            } else if (resumed) {
+                idleFlow();
             }
         }
+
+        return false;
     }
 
     // -- commands ------------------------------------------------------------------------------
@@ -188,7 +256,9 @@ public final class BraintreePlugin extends CordovaPlugin {
         dataCollector = new DataCollector(context, token);
         deviceData = "";
 
-        // any switch left over from an earlier session can't be finished without its callback
+        // new clients: whatever the old ones had in flight is over, and any switch left over from
+        // an earlier session can't be finished without its callback
+        cancelFlow();
         prefs().edit().remove(PENDING_PAYPAL).remove(PENDING_VENMO).apply();
 
         dataCollector.collectDeviceData(context, new DataCollectorRequest(false), (DataCollectorResult result) -> {
@@ -204,10 +274,11 @@ public final class BraintreePlugin extends CordovaPlugin {
         if (payPalClient == null) {
             callbackContext.error("The Braintree client must first be initialized via BraintreePlugin.initialize(options)");
             return;
-        } else if (flowCallback != null) {
-            callbackContext.error("A payment flow is already in progress.");
-            return;
         }
+
+        // one already in progress is over: the page could not tap a button while it ran unless
+        // its result never came, and the new tap is what the payer wants now
+        cancelFlow();
 
         String flow = args.optString(0, "vault");
         String amount = args.isNull(1) ? null : args.optString(1, null);
@@ -240,9 +311,16 @@ public final class BraintreePlugin extends CordovaPlugin {
 
         flowCallback = callbackContext;
         flowKind = PENDING_PAYPAL;
+        flowIdled = false;
+
+        final int gen = ++generation;
+
+        watch(gen);
 
         payPalClient.createPaymentAuthRequest(activity, request, (PayPalPaymentAuthRequest authRequest) -> {
-            if (authRequest instanceof PayPalPaymentAuthRequest.ReadyToLaunch) {
+            if (gen != generation) {
+                return;
+            } else if (authRequest instanceof PayPalPaymentAuthRequest.ReadyToLaunch) {
                 PayPalPendingRequest pending = payPalLauncher.launch((ComponentActivity) activity, (PayPalPaymentAuthRequest.ReadyToLaunch) authRequest);
 
                 if (pending instanceof PayPalPendingRequest.Started) {
@@ -289,10 +367,11 @@ public final class BraintreePlugin extends CordovaPlugin {
         if (venmoClient == null) {
             callbackContext.error("The Braintree client must first be initialized via BraintreePlugin.initialize(options)");
             return;
-        } else if (flowCallback != null) {
-            callbackContext.error("A payment flow is already in progress.");
-            return;
         }
+
+        // one already in progress is over: the page could not tap a button while it ran unless
+        // its result never came, and the new tap is what the payer wants now
+        cancelFlow();
 
         String usage = args.optString(0, "multi_use");
         String amount = args.isNull(1) ? null : args.optString(1, null);
@@ -312,9 +391,16 @@ public final class BraintreePlugin extends CordovaPlugin {
 
         flowCallback = callbackContext;
         flowKind = PENDING_VENMO;
+        flowIdled = false;
+
+        final int gen = ++generation;
+
+        watch(gen);
 
         venmoClient.createPaymentAuthRequest(activity, request, (VenmoPaymentAuthRequest authRequest) -> {
-            if (authRequest instanceof VenmoPaymentAuthRequest.ReadyToLaunch) {
+            if (gen != generation) {
+                return;
+            } else if (authRequest instanceof VenmoPaymentAuthRequest.ReadyToLaunch) {
                 VenmoPendingRequest pending = venmoLauncher.launch((ComponentActivity) activity, (VenmoPaymentAuthRequest.ReadyToLaunch) authRequest);
 
                 if (pending instanceof VenmoPendingRequest.Started) {
@@ -383,6 +469,8 @@ public final class BraintreePlugin extends CordovaPlugin {
     private void finishFlow(JSONObject json) {
         CallbackContext callback = flowCallback;
 
+        generation++;
+
         flowCallback = null;
         flowKind = null;
 
@@ -391,8 +479,47 @@ public final class BraintreePlugin extends CordovaPlugin {
         }
     }
 
+    // a flow with no word for a minute (a switch that never left, a callback that never came) is
+    // reported idle, when it is still the same flow by then
+    private void watch(final int gen) {
+        handler.postDelayed(() -> {
+            if (gen == generation) {
+                idleFlow();
+            }
+        }, BACKSTOP_MS);
+    }
+
+    // the page is told the flow looks idle (once): its buttons come back, the flow stays
+    private void idleFlow() {
+        CallbackContext callback = flowCallback;
+
+        if (callback == null || flowIdled) {
+            return;
+        }
+
+        flowIdled = true;
+
+        JSONObject json = new JSONObject();
+
+        try {
+            json.put(USER_CANCELLED, true);
+            json.put("idle", true);
+        } catch (JSONException ignored) { /* literals */ }
+
+        PluginResult result = new PluginResult(PluginResult.Status.OK, json);
+
+        result.setKeepCallback(true);
+        callback.sendPluginResult(result);
+    }
+
     private void cancelFlow() {
         CallbackContext callback = flowCallback;
+
+        generation++;
+
+        if (flowKind != null) {
+            prefs().edit().remove(flowKind).apply();
+        }
 
         flowCallback = null;
         flowKind = null;
@@ -410,6 +537,8 @@ public final class BraintreePlugin extends CordovaPlugin {
 
     private void failFlow(String message) {
         CallbackContext callback = flowCallback;
+
+        generation++;
 
         if (flowKind != null) {
             prefs().edit().remove(flowKind).apply();
